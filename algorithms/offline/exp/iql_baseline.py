@@ -51,6 +51,7 @@ def main():
         if 'iql_tau' not in settings:
             if config.dataset == 'medium-expert':
                 config.iql_tau = 0.5
+    config.device = DEVICE
 
     data_dir = '/train_logs'
     logger_kwargs = setup_logger_kwargs_dt(exp_name_full, config.seed, data_dir)
