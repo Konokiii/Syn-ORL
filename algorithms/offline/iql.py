@@ -2,8 +2,11 @@
 # https://arxiv.org/pdf/2110.06169.pdf
 import copy
 import os
+import sys
 import random
+import time
 import uuid
+import joblib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -19,8 +22,10 @@ import wandb
 from torch.distributions import Normal
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-TensorBatch = List[torch.Tensor]
+# Modified: import customized helpers
+from utils import EpochLogger
 
+TensorBatch = List[torch.Tensor]
 
 EXP_ADV_MAX = 100.0
 LOG_STD_MIN = -20.0
@@ -31,7 +36,10 @@ LOG_STD_MAX = 2.0
 class TrainConfig:
     # Experiment
     device: str = "cuda"
-    env: str = "halfcheetah-medium-expert-v2"  # OpenAI gym environment name
+    # env: str = "halfcheetah-medium-expert-v2"  # OpenAI gym environment name
+    # Modified: separate env and dataset
+    env: str = "halfcheetah"  # OpenAI gym environment name
+    dataset: str = "medium-expert"
     seed: int = 0  # Sets Gym, PyTorch and Numpy seeds
     eval_freq: int = int(5e3)  # How often (time steps) we evaluate
     n_episodes: int = 10  # How many episodes run during evaluation
@@ -57,6 +65,23 @@ class TrainConfig:
     group: str = "IQL-D4RL"
     name: str = "IQL"
 
+    # Pretraining
+    do_pretrain_only: bool = False
+    pretrain_mode: str = 'none'
+    pretrain_data_ratio: float = 1.0
+    max_pretrain_timesteps: int = int(1e5)
+    hard_update_target_after_pretrain: bool = True
+    # MDP pretrain settings
+    mdppre_n_traj: int = 1000
+    mdppre_random_start: bool = False
+    mdppre_same_as_s_and_policy: bool = True
+    mdppre_n_action: int = 100
+    mdppre_n_state: int = 100
+    mdppre_action_dim: int = 6
+    mdppre_state_dim: int = 17
+    mdppre_transition_temperature: int = 1
+    mdppre_policy_temperature: int = 1
+
     def __post_init__(self):
         self.name = f"{self.name}-{self.env}-{str(uuid.uuid4())[:8]}"
         if self.checkpoints_path is not None:
@@ -79,15 +104,15 @@ def normalize_states(states: np.ndarray, mean: np.ndarray, std: np.ndarray):
 
 
 def wrap_env(
-    env: gym.Env,
-    state_mean: Union[np.ndarray, float] = 0.0,
-    state_std: Union[np.ndarray, float] = 1.0,
-    reward_scale: float = 1.0,
+        env: gym.Env,
+        state_mean: Union[np.ndarray, float] = 0.0,
+        state_std: Union[np.ndarray, float] = 1.0,
+        reward_scale: float = 1.0,
 ) -> gym.Env:
     # PEP 8: E731 do not assign a lambda expression, use a def
     def normalize_state(state):
         return (
-            state - state_mean
+                state - state_mean
         ) / state_std  # epsilon should be already added in std.
 
     def scale_reward(reward):
@@ -102,11 +127,11 @@ def wrap_env(
 
 class ReplayBuffer:
     def __init__(
-        self,
-        state_dim: int,
-        action_dim: int,
-        buffer_size: int,
-        device: str = "cpu",
+            self,
+            state_dim: int,
+            action_dim: int,
+            buffer_size: int,
+            device: str = "cpu",
     ):
         self._buffer_size = buffer_size
         self._pointer = 0
@@ -162,8 +187,31 @@ class ReplayBuffer:
         raise NotImplementedError
 
 
+def load_mdp_dataset(n_traj, n_state, n_action, policy_temperature, transition_temperature,
+                     ratio=1.0, random_start=False, verbose=True):
+    prefix = 'mdp2' if random_start else 'mdp'
+    data_name = prefix + '_traj%d_ns%d_na%d_pt%s_tt%s.pkl' % (n_traj, n_state, n_action,
+                                                              str(policy_temperature), str(transition_temperature))
+    save_name = '/algorithms/mdpdata/%s' % data_name
+
+    dataset = joblib.load(save_name)
+    if verbose:
+        print("MDP pretrain data loaded from:", save_name)
+
+    n_data = dataset['observations'].shape[0]
+    use_size = int(n_data * ratio)
+    # Modified: Do not set numpy seed here
+    idxs = np.random.choice(n_data, use_size, replace=False)
+
+    return dict(
+        observations=dataset['observations'][idxs],
+        actions=dataset['actions'][idxs],
+        next_observations=dataset['next_observations'][idxs],
+    )
+
+
 def set_seed(
-    seed: int, env: Optional[gym.Env] = None, deterministic_torch: bool = False
+        seed: int, env: Optional[gym.Env] = None, deterministic_torch: bool = False
 ):
     if env is not None:
         env.seed(seed)
@@ -171,6 +219,8 @@ def set_seed(
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
     random.seed(seed)
+    # Modified: control cuda seed
+    torch.cuda.manual_seed_all(seed)
     torch.manual_seed(seed)
     torch.use_deterministic_algorithms(deterministic_torch)
 
@@ -188,7 +238,7 @@ def wandb_init(config: dict) -> None:
 
 @torch.no_grad()
 def eval_actor(
-    env: gym.Env, actor: nn.Module, device: str, n_episodes: int, seed: int
+        env: gym.Env, actor: nn.Module, device: str, n_episodes: int, seed: int
 ) -> np.ndarray:
     env.seed(seed)
     actor.eval()
@@ -231,7 +281,7 @@ def modify_reward(dataset, env_name, max_episode_steps=1000):
 
 
 def asymmetric_l2_loss(u: torch.Tensor, tau: float) -> torch.Tensor:
-    return torch.mean(torch.abs(tau - (u < 0).float()) * u**2)
+    return torch.mean(torch.abs(tau - (u < 0).float()) * u ** 2)
 
 
 class Squeeze(nn.Module):
@@ -245,12 +295,12 @@ class Squeeze(nn.Module):
 
 class MLP(nn.Module):
     def __init__(
-        self,
-        dims,
-        activation_fn: Callable[[], nn.Module] = nn.ReLU,
-        output_activation_fn: Callable[[], nn.Module] = None,
-        squeeze_output: bool = False,
-        dropout: Optional[float] = None,
+            self,
+            dims,
+            activation_fn: Callable[[], nn.Module] = nn.ReLU,
+            output_activation_fn: Callable[[], nn.Module] = None,
+            squeeze_output: bool = False,
+            dropout: Optional[float] = None,
     ):
         super().__init__()
         n_dims = len(dims)
@@ -280,13 +330,13 @@ class MLP(nn.Module):
 
 class GaussianPolicy(nn.Module):
     def __init__(
-        self,
-        state_dim: int,
-        act_dim: int,
-        max_action: float,
-        hidden_dim: int = 256,
-        n_hidden: int = 2,
-        dropout: Optional[float] = None,
+            self,
+            state_dim: int,
+            act_dim: int,
+            max_action: float,
+            hidden_dim: int = 256,
+            n_hidden: int = 2,
+            dropout: Optional[float] = None,
     ):
         super().__init__()
         self.net = MLP(
@@ -312,13 +362,13 @@ class GaussianPolicy(nn.Module):
 
 class DeterministicPolicy(nn.Module):
     def __init__(
-        self,
-        state_dim: int,
-        act_dim: int,
-        max_action: float,
-        hidden_dim: int = 256,
-        n_hidden: int = 2,
-        dropout: Optional[float] = None,
+            self,
+            state_dim: int,
+            act_dim: int,
+            max_action: float,
+            hidden_dim: int = 256,
+            n_hidden: int = 2,
+            dropout: Optional[float] = None,
     ):
         super().__init__()
         self.net = MLP(
@@ -344,15 +394,18 @@ class DeterministicPolicy(nn.Module):
 
 class TwinQ(nn.Module):
     def __init__(
-        self, state_dim: int, action_dim: int, hidden_dim: int = 256, n_hidden: int = 2
+            self, state_dim: int, action_dim: int, hidden_dim: int = 256, n_hidden: int = 2
     ):
         super().__init__()
         dims = [state_dim + action_dim, *([hidden_dim] * n_hidden), 1]
         self.q1 = MLP(dims, squeeze_output=True)
         self.q2 = MLP(dims, squeeze_output=True)
 
+        self.feature_to_obs1 = nn.Linear(dims[-2], state_dim)
+        self.feature_to_obs2 = nn.Linear(dims[-2], state_dim)
+
     def both(
-        self, state: torch.Tensor, action: torch.Tensor
+            self, state: torch.Tensor, action: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         sa = torch.cat([state, action], 1)
         return self.q1(sa), self.q2(sa)
@@ -360,33 +413,49 @@ class TwinQ(nn.Module):
     def forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         return torch.min(*self.both(state, action))
 
+    # Modified: predict next state in Q nets
+    def predict_next_obs(self, state, action):
+        sa = torch.cat([state, action], 1)
+        q1_features = self.q1.net[:-2](sa)
+        next_obs1 = self.feature_to_obs1(q1_features)
+        q2_features = self.q2.net[:-2](sa)
+        next_obs2 = self.feature_to_obs2(q2_features)
+
+        return next_obs1, next_obs2
+
 
 class ValueFunction(nn.Module):
     def __init__(self, state_dim: int, hidden_dim: int = 256, n_hidden: int = 2):
         super().__init__()
         dims = [state_dim, *([hidden_dim] * n_hidden), 1]
         self.v = MLP(dims, squeeze_output=True)
+        self.feature_to_obs = nn.Linear(dims[-2], state_dim)
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
         return self.v(state)
 
+    # Modified: predict next state in V net
+    def predict_next_obs(self, state):
+        features = self.v.net[:-2](state)
+        return self.feature_to_obs(features)
+
 
 class ImplicitQLearning:
     def __init__(
-        self,
-        max_action: float,
-        actor: nn.Module,
-        actor_optimizer: torch.optim.Optimizer,
-        q_network: nn.Module,
-        q_optimizer: torch.optim.Optimizer,
-        v_network: nn.Module,
-        v_optimizer: torch.optim.Optimizer,
-        iql_tau: float = 0.7,
-        beta: float = 3.0,
-        max_steps: int = 1000000,
-        discount: float = 0.99,
-        tau: float = 0.005,
-        device: str = "cpu",
+            self,
+            max_action: float,
+            actor: nn.Module,
+            actor_optimizer: torch.optim.Optimizer,
+            q_network: nn.Module,
+            q_optimizer: torch.optim.Optimizer,
+            v_network: nn.Module,
+            v_optimizer: torch.optim.Optimizer,
+            iql_tau: float = 0.7,
+            beta: float = 3.0,
+            max_steps: int = 1000000,
+            discount: float = 0.99,
+            tau: float = 0.005,
+            device: str = "cpu",
     ):
         self.max_action = max_action
         self.qf = q_network
@@ -405,6 +474,9 @@ class ImplicitQLearning:
         self.total_it = 0
         self.device = device
 
+        # Modified: add parameters for pretraining
+        self.total_pretrain_steps = 0
+
     def _update_v(self, observations, actions, log_dict) -> torch.Tensor:
         # Update value function
         with torch.no_grad():
@@ -420,13 +492,13 @@ class ImplicitQLearning:
         return adv
 
     def _update_q(
-        self,
-        next_v: torch.Tensor,
-        observations: torch.Tensor,
-        actions: torch.Tensor,
-        rewards: torch.Tensor,
-        terminals: torch.Tensor,
-        log_dict: Dict,
+            self,
+            next_v: torch.Tensor,
+            observations: torch.Tensor,
+            actions: torch.Tensor,
+            rewards: torch.Tensor,
+            terminals: torch.Tensor,
+            log_dict: Dict,
     ):
         targets = rewards + (1.0 - terminals.float()) * self.discount * next_v.detach()
         qs = self.qf.both(observations, actions)
@@ -440,11 +512,11 @@ class ImplicitQLearning:
         soft_update(self.q_target, self.qf, self.tau)
 
     def _update_policy(
-        self,
-        adv: torch.Tensor,
-        observations: torch.Tensor,
-        actions: torch.Tensor,
-        log_dict: Dict,
+            self,
+            adv: torch.Tensor,
+            observations: torch.Tensor,
+            actions: torch.Tensor,
+            log_dict: Dict,
     ):
         exp_adv = torch.exp(self.beta * adv.detach()).clamp(max=EXP_ADV_MAX)
         policy_out = self.actor(observations)
@@ -487,6 +559,56 @@ class ImplicitQLearning:
 
         return log_dict
 
+    # Modified: add 'pretrain' for IQL trainer
+    def pretrain(self, batch, pretrain_mode: str):
+        self.total_pretrain_steps += 1
+
+        observations = batch['observations']
+        actions = batch['actions']
+        # rewards = batch['rewards']
+        next_observations = batch['next_observations']
+        # dones = batch['dones']
+
+        pretrain_loss_qs = None
+        pretrain_loss_v = None
+        if pretrain_mode == 'mdp_fd_onlyQ':
+            obs_next_q1, obs_next_q2 = self.qf.predict_next_obs(observations, actions)
+            pretrain_loss_q1 = F.mse_loss(obs_next_q1, next_observations)
+            pretrain_loss_q2 = F.mse_loss(obs_next_q2, next_observations)
+            pretrain_loss_qs = pretrain_loss_q1 + pretrain_loss_q2
+        elif pretrain_mode == 'mdp_fd_onlyV':
+            obs_next_v = self.vf.predict_next_obs(observations)
+            pretrain_loss_v = F.mse_loss(obs_next_v, next_observations)
+        elif pretrain_mode == 'mdp_fd_QV':
+            obs_next_q1, obs_next_q2 = self.qf.predict_next_obs(observations, actions)
+            obs_next_v = self.vf.predict_next_obs(observations)
+            pretrain_loss_q1 = F.mse_loss(obs_next_q1, next_observations)
+            pretrain_loss_q2 = F.mse_loss(obs_next_q2, next_observations)
+            pretrain_loss_qs = pretrain_loss_q1 + pretrain_loss_q2
+            pretrain_loss_v = F.mse_loss(obs_next_v, next_observations)
+        else:
+            raise NotImplementedError
+
+        pretrain_loss = 0
+        if pretrain_loss_qs:
+            pretrain_loss += pretrain_loss_qs.item()
+            self.q_optimizer.zero_grad()
+            pretrain_loss_qs.backward()
+            self.q_optimizer.step()
+
+        if pretrain_loss_v:
+            pretrain_loss += pretrain_loss_v.item()
+            self.v_optimizer.zero_grad()
+            pretrain_loss_v.backward()
+            self.v_optimizer.step()
+
+        metrics = dict(
+            pretrain_loss=pretrain_loss,
+            total_pretrain_steps=self.total_pretrain_steps,
+        )
+
+        return metrics
+
     def state_dict(self) -> Dict[str, Any]:
         return {
             "qf": self.qf.state_dict(),
@@ -514,8 +636,261 @@ class ImplicitQLearning:
         self.total_it = state_dict["total_it"]
 
 
+def run_IQL(config: TrainConfig, outdir: str, exp_name: str): # TODO: pass outdir and exp_name somewhere else
+    # Set env/exp_name/seed/save_config
+    env_full = '%s-%s-v2' % (config.env, config.dataset)
+    env = gym.make(env_full)
+    set_seed(config.seed, env)
+
+    if config.checkpoints_path is not None:
+        print(f"Checkpoints path: {config.checkpoints_path}")
+        os.makedirs(config.checkpoints_path, exist_ok=True)
+        with open(os.path.join(config.checkpoints_path, "config.yaml"), "w") as f:
+            pyrallis.dump(config, f)
+
+    print("---------------------------------------")
+    print(f"Training IQL, Env: {env_full}, Seed: {config.seed}")
+    print("---------------------------------------")
+
+    # Initialize Q/V/actor nets
+    state_dim = env.observation_space.shape[0]
+    action_dim = env.action_space.shape[0]
+    max_action = float(env.action_space.high[0])
+    q_network = TwinQ(state_dim, action_dim).to(config.device)
+    v_network = ValueFunction(state_dim).to(config.device)
+    actor = (
+        DeterministicPolicy(
+            state_dim, action_dim, max_action, dropout=config.actor_dropout
+        )
+        if config.iql_deterministic
+        else GaussianPolicy(
+            state_dim, action_dim, max_action, dropout=config.actor_dropout
+        )
+    ).to(config.device)
+    v_optimizer = torch.optim.Adam(v_network.parameters(), lr=config.vf_lr)
+    q_optimizer = torch.optim.Adam(q_network.parameters(), lr=config.qf_lr)
+    actor_optimizer = torch.optim.Adam(actor.parameters(), lr=config.actor_lr)
+
+    # Initialize trainer
+    kwargs = {
+        "max_action": max_action,
+        "actor": actor,
+        "actor_optimizer": actor_optimizer,
+        "q_network": q_network,
+        "q_optimizer": q_optimizer,
+        "v_network": v_network,
+        "v_optimizer": v_optimizer,
+        "discount": config.discount,
+        "tau": config.tau,
+        "device": config.device,
+        # IQL
+        "beta": config.beta,
+        "iql_tau": config.iql_tau,
+        "max_steps": config.max_timesteps,
+    }
+
+    trainer = ImplicitQLearning(**kwargs)
+    if config.load_model != "":
+        policy_file = Path(config.load_model)
+        trainer.load_state_dict(torch.load(policy_file))
+        actor = trainer.actor
+
+    # Pretrain part
+    print("============================ PRETRAIN STAGE STARTED! ============================")
+    st = time.time()
+    if config.pretrain_mode != 'none':
+        # TODO: add self and cross-domain pretraining
+        if config.pretrain_mode in ['mdp_fd_onlyQ', 'mdp_fd_onlyV', 'mdp_fd_QV']:
+            pretrain_env_name = None
+        else:
+            pretrain_env_name = env_full
+
+        if pretrain_env_name:
+            pass
+        else:  # MDP pretrain
+            # adjust MDP pretrain hyperparameters
+            if config.mdppre_same_as_s_and_policy:
+                config.mdppre_n_action = config.mdppre_n_state
+                config.mdppre_transition_temperature = config.mdppre_policy_temperature
+            config.mdppre_state_dim = state_dim
+            config.mdppre_action_dim = action_dim
+
+            pretrain_model_name = '%s_%s_preM%s_nTraj%d_preR%s_nS%d_dimS%d_nA%d_dimA%d_pt%s_tt%s_randStart%s_preUps%s' \
+                                  '.pth' \
+                                  % ('iql', config.env, config.pretrain_mode,
+                                     config.mdppre_n_traj, str(config.pretrain_data_ratio),
+                                     config.mdppre_n_state, config.mdppre_state_dim,
+                                     config.mdppre_n_action, config.mdppre_action_dim,
+                                     str(config.mdppre_policy_temperature), str(config.mdppre_transition_temperature),
+                                     config.mdppre_random_start,
+                                     config.max_pretrain_timesteps
+                                     )
+
+        pretrain_model_folder_path = '/algorithms/pretrained_cql_models/IQL/'
+        pretrain_full_path = os.path.join(pretrain_model_folder_path, pretrain_model_name)
+        if os.path.exists(pretrain_full_path):
+            if not torch.cuda.is_available():
+                pretrain_dict = torch.load(pretrain_full_path, map_location=torch.device('cpu'))
+            else:
+                pretrain_dict = torch.load(pretrain_full_path)
+
+            pretrained_agent = pretrain_dict['agent']
+            if config.pretrain_mode in ['mdp_fd_onlyQ', 'mdp_fd_QV']:
+                trainer.qf.load_state_dict(pretrained_agent.qf.state_dict())
+            if config.pretrain_mode in ['mdp_fd_onlyV', 'mdp_fd_QV']:
+                trainer.vf.load_state_dict(pretrained_agent.vf.state_dict())
+
+            loaded = True
+            print("Pretrained model loaded from:", pretrain_full_path)
+
+        else:
+            print("Pretrained model does not exist:", pretrain_full_path)
+            loaded = False
+
+        if not loaded:
+            print("Start pretraining")
+            # load pretraining dataset here.
+            if pretrain_env_name:
+                pass
+            else:  # MDP synthetic data
+                dataset = load_mdp_dataset(config.mdppre_n_traj,
+                                           config.mdppre_n_state,
+                                           config.mdppre_n_action,
+                                           config.mdppre_policy_temperature,
+                                           config.mdppre_transition_temperature,
+                                           ratio=config.pretrain_data_ratio,
+                                           random_start=config.mdppre_random_start
+                                           )
+                # FIXME: This may affect e.g. sample_batch. Maybe shuffle the dataset before this line.
+                np.random.seed(0)
+                index2state = 2 * np.random.rand(config.mdppre_n_state, config.mdppre_state_dim) - 1
+                index2action = 2 * np.random.rand(config.mdppre_n_action, config.mdppre_action_dim) - 1
+                index2state, index2action = index2state.astype(np.float32), index2action.astype(np.float32)
+
+            # Pretrain loop
+            pretrain_logger = EpochLogger(outdir, 'pretrain_progress.csv', exp_name)
+            steps_per_epoch = config.max_pretrain_timesteps // 20
+            metrics = {}
+            for i_pretrain in range(config.max_pretrain_timesteps):
+                # TODO: use ReplayBuffer class to sample data batch
+                indices = np.random.randint(dataset['observations'].shape[0], size=config.batch_size)
+                batch = {key: dataset[key][indices, ...] for key in dataset.keys()}
+                if not pretrain_env_name:
+                    batch['observations'] = index2state[batch['observations']]
+                    batch['actions'] = index2action[batch['actions']]
+                    batch['next_observations'] = index2state[batch['next_observations']]
+                batch = {k: torch.from_numpy(v).to(device=config.device, non_blocking=True) for k, v in batch.items()}
+                metrics.update(trainer.pretrain(batch, config.pretrain_mode))
+
+                if (i_pretrain + 1) % steps_per_epoch == 0:
+                    pretrain_logger.log_tabular("PretrainEpoch", (i_pretrain+1)//steps_per_epoch)
+                    pretrain_logger.log_tabular("PretrainTimesteps", metrics['total_pretrain_steps'])
+                    pretrain_logger.log_tabular("Pretrain_loss", metrics['pretrain_loss'])
+                    pretrain_logger.log_tabular("Current_hours", (time.time() - st) / 3600)
+                    pretrain_logger.log_tabular("Estimate_total_hours", (config.max_pretrain_timesteps / (i_pretrain+1))
+                                                * ((time.time() - st) / 3600))
+                    pretrain_logger.dump_tabular()
+                    sys.stdout.flush()
+
+            pretrain_dict = {'agent': trainer,
+                             'algorithm': 'iql',
+                             'env': config.env,
+                             'dataset': config.dataset,
+                             'pretrain_mode': config.pretrain_mode,
+                             'max_pretrain_timesteps': config.max_pretrain_timesteps,
+                             }
+            if not os.path.exists(pretrain_full_path):
+                torch.save(pretrain_dict, pretrain_full_path)
+                print("Saved pretrained model to:", pretrain_full_path)
+            else:
+                print("Pretrained model not saved. Already exist:", pretrain_full_path)
+
+    # post-pretraining adjustment
+    sys.stdout.flush()
+
+    if config.pretrain_mode != 'none':
+        if config.do_pretrain_only:
+            return
+        if config.hard_update_target_after_pretrain:
+            soft_update(trainer.q_target, trainer.qf, tau=1.0)
+
+    # Finetune part
+    print("============================ FINETUNE STAGE STARTED! ============================")
+    logger = EpochLogger(outdir, 'progress.csv', exp_name)
+    logger.save_config(asdict(config))
+
+    dataset = d4rl.qlearning_dataset(env)
+    if config.normalize_reward:
+        modify_reward(dataset, config.env)
+
+    if config.normalize:
+        state_mean, state_std = compute_mean_std(dataset["observations"], eps=1e-3)
+    else:
+        state_mean, state_std = 0, 1
+
+    dataset["observations"] = normalize_states(
+        dataset["observations"], state_mean, state_std
+    )
+    dataset["next_observations"] = normalize_states(
+        dataset["next_observations"], state_mean, state_std
+    )
+    env = wrap_env(env, state_mean=state_mean, state_std=state_std)
+    replay_buffer = ReplayBuffer(
+        state_dim,
+        action_dim,
+        config.buffer_size,
+        config.device,
+    )
+    replay_buffer.load_d4rl_dataset(dataset)
+
+    # wandb_init(asdict(config))
+
+    evaluations = []
+    for t in range(int(config.max_timesteps)):
+        batch = replay_buffer.sample(config.batch_size)
+        batch = [b.to(config.device) for b in batch]
+        log_dict = trainer.train(batch)
+        # wandb.log(log_dict, step=trainer.total_it)
+        # Evaluate episode
+        if (t + 1) % config.eval_freq == 0:
+            print(f"Time steps: {t + 1}")
+            eval_scores = eval_actor(
+                env,
+                actor,
+                device=config.device,
+                n_episodes=config.n_episodes,
+                seed=config.seed,
+            )
+            eval_score = eval_scores.mean()
+            normalized_eval_score = env.get_normalized_score(eval_score) * 100.0
+            evaluations.append(normalized_eval_score)
+            print("---------------------------------------")
+            print(
+                f"Evaluation over {config.n_episodes} episodes: "
+                f"{eval_score:.3f} , D4RL score: {normalized_eval_score:.3f}"
+            )
+            print("---------------------------------------")
+            logger.log_tabular("Iteration", (t+1)//config.eval_freq)
+            logger.log_tabular("Steps", t+1)
+            logger.log_tabular("TestEpRet", eval_score)
+            logger.log_tabular("TestEpNormRet", normalized_eval_score)
+            logger.dump_tabular()
+            sys.stdout.flush()  # flush at end of each epoch for results to show up in hpc
+
+            if config.checkpoints_path is not None:
+                torch.save(
+                    trainer.state_dict(),
+                    os.path.join(config.checkpoints_path, f"checkpoint_{t}.pt"),
+                )
+            # wandb.log(
+            #     {"d4rl_normalized_score": normalized_eval_score}, step=trainer.total_it
+            # )
+
+
+# The 'train' function below is the original IQL launcher.
 @pyrallis.wrap()
 def train(config: TrainConfig):
+    # FixMe: New 'run_IQL' function requires separate config.env and config.dataset, which is different than below.
     env = gym.make(config.env)
 
     state_dim = env.observation_space.shape[0]
@@ -640,4 +1015,4 @@ def train(config: TrainConfig):
 
 
 if __name__ == "__main__":
-    train()
+    run_IQL(config=TrainConfig(), outdir='./', exp_name='iql_test_only')

@@ -1,39 +1,7 @@
-FROM nvidia/cuda:11.3.0-runtime-ubuntu20.04
+FROM cwatcherw/cql:0.1
 WORKDIR /workspace
 
-# python, dependencies for mujoco-py, from https://github.com/openai/mujoco-py
-RUN apt-get update -q \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    python3-pip \
-    build-essential \
-    patchelf \
-    curl \
-    git \
-    libgl1-mesa-dev \
-    libgl1-mesa-glx \
-    libglew-dev \
-    libosmesa6-dev \
-    software-properties-common \
-    net-tools \
-    vim \
-    virtualenv \
-    wget \
-    xpra \
-    xserver-xorg-dev \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+COPY requirements/requirements_dzx.txt requirements_dzx.txt
+RUN pip install --no-cache-dir -r requirements_dzx.txt
 
-RUN ln -s /usr/bin/python3 /usr/bin/python
-# installing mujoco distr
-RUN mkdir -p /workspace/.mujoco \
-    && wget https://mujoco.org/download/mujoco210-linux-x86_64.tar.gz -O mujoco.tar.gz \
-    && tar -xf mujoco.tar.gz -C /workspace/.mujoco \
-    && rm mujoco.tar.gz
-ENV LD_LIBRARY_PATH /workspace/.mujoco/mujoco210/bin:${LD_LIBRARY_PATH}
 
-# installing poetry & env setup, mujoco_py compilation
-COPY requirements/requirements.txt requirements.txt
-RUN pip install -r requirements.txt
-RUN python -c "import mujoco_py"
-
-COPY . /workspace/CORL/

@@ -42,7 +42,7 @@ MANIFEST
 *.manifest
 *.spec
 
-# Installer logs
+# Installer train_logs
 pip-log.txt
 pip-delete-this-directory.txt
 
