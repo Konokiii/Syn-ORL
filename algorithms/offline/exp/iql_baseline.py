@@ -8,9 +8,9 @@ os.environ['MUJOCO_PY_MUJOCO_PATH'] = '/workspace/.mujoco/mujoco210/'
 import torch
 from dataclasses import replace
 import pyrallis
-from algorithms.offline.iql import TrainConfig, run_IQL
+from offline.iql import TrainConfig, run_IQL
 import argparse
-from algorithms.offline.utils import *
+from offline.utils import *
 
 CUDA_AVAILABLE = torch.cuda.is_available()
 if CUDA_AVAILABLE:
