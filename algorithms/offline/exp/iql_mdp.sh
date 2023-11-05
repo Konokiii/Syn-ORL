@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --verbose
-#SBATCH --time=20:00:00
+#SBATCH --time=15:00:00
 #SBATCH --nodes=1
 #SBATCH --exclude=gm[001-025]
 #SBATCH --mem=8GB
 #SBATCH --mail-type=ALL # select which email types will be sent
 #SBATCH --mail-user=zd662@nyu.edu # NOTE: put your netid here if you want emails
 
-#SBATCH --array=0-26 # here the number depends on number of tasks in the array, e.g. 0-11 will create 12 tasks
+#SBATCH --array=0-80 # here the number depends on number of tasks in the array, e.g. 0-11 will create 12 tasks
 #SBATCH --output=./logs/%A_%a.out # %A is SLURM_ARRAY_JOB_ID, %a is SLURM_ARRAY_TASK_ID,
 #SBATCH --error=./logs/%A_%a.err # MAKE SURE WHEN YOU RUN THIS, ../train_logs IS A VALID PATH
 
@@ -26,5 +26,5 @@ echo "Job ID: ${SLURM_ARRAY_TASK_ID}"
 singularity exec --nv -B /scratch/$USER/Syn-ORL/algorithms:/algorithms -B /scratch/$USER/corl-sandbox/opt/conda/lib/python3.8/site-packages/mujoco_py/:/opt/conda/lib/python3.8/site-packages/mujoco_py/ -B /scratch/$USER/Syn-ORL/train_logs:/train_logs /scratch/$USER/corl-sandbox bash -c "
 cd /algorithms
 export PYTHONPATH=$PYTHONPATH:/algorithms
-python offline/exp/iql_baseline.py --setting ${SLURM_ARRAY_TASK_ID}
+python offline/exp/iql_mdp.py --setting ${SLURM_ARRAY_TASK_ID}
 "

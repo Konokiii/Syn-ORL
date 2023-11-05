@@ -8,9 +8,9 @@ os.environ['MUJOCO_PY_MUJOCO_PATH'] = '/workspace/.mujoco/mujoco210/'
 import torch
 from dataclasses import replace
 import pyrallis
-from algorithms.offline.iql import TrainConfig, run_IQL
+from offline.iql import TrainConfig, run_IQL
 import argparse
-from algorithms.offline.utils import *
+from offline.utils import *
 
 CUDA_AVAILABLE = torch.cuda.is_available()
 if CUDA_AVAILABLE:
@@ -29,7 +29,9 @@ def main():
     settings = [
         'env', '', MUJOCO_3_ENVS,
         'dataset', '', MUJOCO_3_DATASETS,
-        'pretrain_mode', 'preM', ['none'],
+        'pretrain_mode', 'preM', ['mdp_fd_QV', 'mdp_fd_onlyV', 'mdp_fd_onlyQ'],
+        'mdppre_n_state', 'ns', [100],
+        'mdppre_policy_temperature', 'pt', [1],
         'seed', '', [0, 1, 2],
     ]
 
@@ -51,6 +53,7 @@ def main():
         if 'iql_tau' not in settings:
             if config.dataset == 'medium-expert':
                 config.iql_tau = 0.5
+    config.device = DEVICE
 
     data_dir = '/train_logs'
     logger_kwargs = setup_logger_kwargs_dt(exp_name_full, config.seed, data_dir)
