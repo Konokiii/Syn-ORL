@@ -726,7 +726,7 @@ def run_IQL(config: TrainConfig, outdir: str, exp_name: str): # TODO: pass outdi
                                      config.max_pretrain_timesteps
                                      )
 
-        pretrain_model_folder_path = '/algorithms/offline/pretrained_cql_models/IQL/'
+        pretrain_model_folder_path = '/algorithms/offline/pretrained_models/IQL/'
         pretrain_full_path = os.path.join(pretrain_model_folder_path, pretrain_model_name)
         if os.path.exists(pretrain_full_path):
             if not torch.cuda.is_available():
