@@ -23,7 +23,7 @@ from torch.distributions import Normal
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 # Modified: import customized helpers
-from utils import EpochLogger
+from offline.utils import EpochLogger
 
 TensorBatch = List[torch.Tensor]
 
