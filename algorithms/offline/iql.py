@@ -192,7 +192,7 @@ def load_mdp_dataset(n_traj, n_state, n_action, policy_temperature, transition_t
     prefix = 'mdp2' if random_start else 'mdp'
     data_name = prefix + '_traj%d_ns%d_na%d_pt%s_tt%s.pkl' % (n_traj, n_state, n_action,
                                                               str(policy_temperature), str(transition_temperature))
-    save_name = '/algorithms/mdpdata/%s' % data_name
+    save_name = '/algorithms/offline/mdpdata/%s' % data_name
 
     dataset = joblib.load(save_name)
     if verbose:
@@ -726,7 +726,7 @@ def run_IQL(config: TrainConfig, outdir: str, exp_name: str): # TODO: pass outdi
                                      config.max_pretrain_timesteps
                                      )
 
-        pretrain_model_folder_path = '/algorithms/pretrained_cql_models/IQL/'
+        pretrain_model_folder_path = '/algorithms/offline/pretrained_cql_models/IQL/'
         pretrain_full_path = os.path.join(pretrain_model_folder_path, pretrain_model_name)
         if os.path.exists(pretrain_full_path):
             if not torch.cuda.is_available():
