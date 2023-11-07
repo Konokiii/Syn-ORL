@@ -27,13 +27,13 @@ def main():
 
     exp_prefix = 'iql'
     settings = [
-        'env', '', MUJOCO_4_ENVS,
-        'dataset', '', ['medium'],#MUJOCO_3_DATASETS,
-        'do_pretrain_only', 'dpo', [True],
+        'env', '', MUJOCO_3_ENVS,
+        'dataset', '', MUJOCO_3_DATASETS,
+        # 'do_pretrain_only', 'dpo', [True],
         'pretrain_mode', 'preM', ['mdp_fd_QV', 'mdp_fd_onlyV', 'mdp_fd_onlyQ'],
         'mdppre_n_state', 'ns', [100],
         'mdppre_policy_temperature', 'pt', [1],
-        'seed', '', [0],
+        'seed', '', list(range(3, 10)),
     ]
 
     indexes, actual_setting, total, hyper2logname = get_setting_dt(settings, setting)
