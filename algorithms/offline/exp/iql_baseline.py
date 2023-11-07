@@ -30,7 +30,7 @@ def main():
         'env', '', MUJOCO_3_ENVS,
         'dataset', '', MUJOCO_3_DATASETS,
         'pretrain_mode', 'preM', ['none'],
-        'seed', '', [0, 1, 2],
+        'seed', '', list(range(3, 10))
     ]
 
     indexes, actual_setting, total, hyper2logname = get_setting_dt(settings, setting)
@@ -41,6 +41,7 @@ def main():
 
     """replace values"""
     config = TrainConfig(**actual_setting)
+    config.device = DEVICE
     if config.env == 'hopper':
         if 'iql_deterministic' not in settings:
             if config.dataset in ['medium-replay', 'medium']:
@@ -51,7 +52,6 @@ def main():
         if 'iql_tau' not in settings:
             if config.dataset == 'medium-expert':
                 config.iql_tau = 0.5
-    config.device = DEVICE
 
     data_dir = '/train_logs'
     logger_kwargs = setup_logger_kwargs_dt(exp_name_full, config.seed, data_dir)

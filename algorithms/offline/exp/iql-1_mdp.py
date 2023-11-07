@@ -25,14 +25,14 @@ def main():
     args = parser.parse_args()
     setting = args.setting
 
-    exp_prefix = 'iql'
+    exp_prefix = 'iql-1'
     settings = [
-        'env', '', MUJOCO_3_ENVS,
+        'env', '', MUJOCO_4_ENVS,
         'dataset', '', MUJOCO_3_DATASETS,
-        'pretrain_mode', 'preM', ['mdp_fd_QV'],
+        'pretrain_mode', 'preM', ['mdp_fd_QV', 'mdp_fd_onlyV', 'mdp_fd_onlyQ'],
         'mdppre_n_state', 'ns', [100],
         'mdppre_policy_temperature', 'pt', [1],
-        'seed', '', [0, 1, 2],
+        'seed', '', list(range(10)),
     ]
 
     indexes, actual_setting, total, hyper2logname = get_setting_dt(settings, setting)
@@ -43,17 +43,17 @@ def main():
 
     """replace values"""
     config = TrainConfig(**actual_setting)
-    if config.env == 'hopper':
-        if 'iql_deterministic' not in settings:
-            if config.dataset in ['medium-replay', 'medium']:
-                config.iql_deterministic = True
-        if 'beta' not in settings:
-            if config.dataset == 'medium-expert':
-                config.beta = 6.0
-        if 'iql_tau' not in settings:
-            if config.dataset == 'medium-expert':
-                config.iql_tau = 0.5
     config.device = DEVICE
+    # if config.env == 'hopper':
+    #     if 'iql_deterministic' not in settings:
+    #         if config.dataset in ['medium-replay', 'medium']:
+    #             config.iql_deterministic = True
+    #     if 'beta' not in settings:
+    #         if config.dataset == 'medium-expert':
+    #             config.beta = 6.0
+    #     if 'iql_tau' not in settings:
+    #         if config.dataset == 'medium-expert':
+    #             config.iql_tau = 0.5
 
     data_dir = '/train_logs'
     logger_kwargs = setup_logger_kwargs_dt(exp_name_full, config.seed, data_dir)
