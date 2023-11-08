@@ -16,7 +16,7 @@ d4rl_x_axis_col_name = 'Steps'
 default_performance_smooth = 5
 font_size = 10
 
-data_path = '../train_logs/iql_results/'
+data_path = '../train_logs/iql_baseline/'
 save_path = './figures/'
 
 
@@ -33,14 +33,13 @@ def get_full_names_with_envs(base_names, envs):
     return to_return
 
 
-def plot_iql_performance_curves(labels, base_names):
+def plot_iql_performance_curves(labels, base_names, env_names):
     y = d4rl_test_performance_col_name
-    all_envs = d4rl_9_datasets_envs
 
     # aggregate
     quick_plot_with_full_name(
         labels,
-        get_full_names_with_envs(base_names, all_envs),
+        get_full_names_with_envs(base_names, env_names),
         save_name_prefix='agg-iql',
         base_data_folder_path=data_path,
         save_folder_path=save_path,
@@ -52,7 +51,7 @@ def plot_iql_performance_curves(labels, base_names):
     )
 
     # separate
-    for i, env_dataset_name in enumerate(all_envs):
+    for i, env_dataset_name in enumerate(env_names):
         quick_plot_with_full_name(  # labels, folder name prefix, envs
             labels,
             get_full_names_with_envs(base_names, [env_dataset_name]),
@@ -68,33 +67,34 @@ def plot_iql_performance_curves(labels, base_names):
         )
 
     # separate into one
-    if len(all_envs) == 9:
+    if len(env_names) == 9:
         nrows, ncols = 3, 3
     else:
         nrows, ncols = 4, 3
-    fig, axs = plt.subplots(nrows=nrows, ncols=ncols, sharex=True, sharey=True, figsize=(15, 12))
-    for i, env in enumerate(all_envs):
-        ax = axs[i // nrows][i % ncols]
+    fig, axs = plt.subplots(nrows=nrows, ncols=ncols, sharex=True, sharey=True, figsize=(18, 12))
+    for i, env in enumerate(env_names):
+        ax = axs[i // ncols][i % ncols]
         ax.set_axis_off()
         path = save_path + f'TestEpNormRet/ind-iql_{y}_{env}.png'
         ax.imshow(pltimg.imread(path))
         ax.set_title(env)
     fig.tight_layout()
-    plt.savefig(save_path+'TestEpNormRet/3x3-iql_TestEpNormRet.png')
+    plt.savefig(save_path+f'TestEpNormRet/{nrows}x{ncols}-iql_TestEpNormRet.png')
 
 
 labels = [
-    'IQL',
-    'IQL_Q',
-    'IQL_V',
-    'IQL_QV'
+    'IQL-1',
+    'IQL-1_Q',
+    'IQL-1_V',
+    'IQL-1_QV',
 ]
 
 base_names = [
-    iql_baseline,
-    iql_mdp_q,
-    iql_mdp_v,
-    iql_mdp_qv
+    iql1_baseline,
+    iql1_mdp_q,
+    iql1_mdp_v,
+    iql1_mdp_qv
 ]
 
-plot_iql_performance_curves(labels, base_names)
+env_names = d4rl_12_datasets_envs
+plot_iql_performance_curves(labels, base_names, env_names)

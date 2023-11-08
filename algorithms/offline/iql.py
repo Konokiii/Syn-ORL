@@ -60,6 +60,7 @@ class TrainConfig:
     qf_lr: float = 3e-4  # Critic learning rate
     actor_lr: float = 3e-4  # Actor learning rate
     actor_dropout: Optional[float] = None  # Adroit uses dropout for policy network
+    use_cosine_lr_scheduler: bool = True  # Apply cosine LR scheduler to policy extraction
     # Wandb logging
     project: str = "CORL"
     group: str = "IQL-D4RL"
@@ -456,6 +457,8 @@ class ImplicitQLearning:
             discount: float = 0.99,
             tau: float = 0.005,
             device: str = "cpu",
+            # Modified: cosine lr scheduler switch
+            use_cosine_lr_scheduler: bool = True
     ):
         self.max_action = max_action
         self.qf = q_network
@@ -465,6 +468,7 @@ class ImplicitQLearning:
         self.v_optimizer = v_optimizer
         self.q_optimizer = q_optimizer
         self.actor_optimizer = actor_optimizer
+        self.use_cosine_lr_scheduler = use_cosine_lr_scheduler
         self.actor_lr_schedule = CosineAnnealingLR(self.actor_optimizer, max_steps)
         self.iql_tau = iql_tau
         self.beta = beta
@@ -533,7 +537,8 @@ class ImplicitQLearning:
         self.actor_optimizer.zero_grad()
         policy_loss.backward()
         self.actor_optimizer.step()
-        self.actor_lr_schedule.step()
+        if self.use_cosine_lr_scheduler:
+            self.actor_lr_schedule.step()
 
     def train(self, batch: TensorBatch) -> Dict[str, float]:
         self.total_it += 1
@@ -687,6 +692,7 @@ def run_IQL(config: TrainConfig, outdir: str, exp_name: str): # TODO: pass outdi
         "beta": config.beta,
         "iql_tau": config.iql_tau,
         "max_steps": config.max_timesteps,
+        "use_cosine_lr_scheduler": config.use_cosine_lr_scheduler
     }
 
     trainer = ImplicitQLearning(**kwargs)
@@ -816,9 +822,6 @@ def run_IQL(config: TrainConfig, outdir: str, exp_name: str): # TODO: pass outdi
 
     # Finetune part
     print("============================ FINETUNE STAGE STARTED! ============================")
-    logger = EpochLogger(outdir, 'progress.csv', exp_name)
-    logger.save_config(asdict(config))
-
     dataset = d4rl.qlearning_dataset(env)
     if config.normalize_reward:
         modify_reward(dataset, config.env)
@@ -844,6 +847,8 @@ def run_IQL(config: TrainConfig, outdir: str, exp_name: str): # TODO: pass outdi
     replay_buffer.load_d4rl_dataset(dataset)
 
     # wandb_init(asdict(config))
+    logger = EpochLogger(outdir, 'progress.csv', exp_name)
+    logger.save_config(asdict(config))
 
     evaluations = []
     for t in range(int(config.max_timesteps)):

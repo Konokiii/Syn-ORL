@@ -29,6 +29,7 @@ def main():
     settings = [
         'env', '', MUJOCO_4_ENVS,
         'dataset', '', MUJOCO_3_DATASETS,
+        'use_cosine_lr_scheduler', 'cosLR', [False],
         'pretrain_mode', 'preM', ['mdp_fd_QV', 'mdp_fd_onlyV', 'mdp_fd_onlyQ'],
         'mdppre_n_state', 'ns', [100],
         'mdppre_policy_temperature', 'pt', [1],

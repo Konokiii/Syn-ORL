@@ -29,6 +29,7 @@ def main():
     settings = [
         'env', '', MUJOCO_4_ENVS,
         'dataset', '', MUJOCO_3_DATASETS,
+        'use_cosine_lr_scheduler', 'cosLR', [False],
         'pretrain_mode', 'preM', ['none'],
         'seed', '', list(range(10)),
     ]
