@@ -4,7 +4,7 @@ import copy
 import os
 import random
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import wandb
+from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModel
 
 from icl4rl.state_action_annotations import *
@@ -32,9 +33,9 @@ class TrainConfig:
     source_dataset: str = 'medium-expert'
     target_dataset: str = 'medium-expert'
     pretrained_LM: str = 'sentence-transformers/all-mpnet-base-v2'
-    prefix_annotation = MUJOCO_SHORT_DESCRIPTION
-    suffix_annotation = MUJOCO_UNIT
-    data_ratio = 1.0
+    prefix_annotation: dict = field(default_factory=lambda: MUJOCO_SHORT_DESCRIPTION)
+    suffix_annotation: dict = field(default_factory=lambda: MUJOCO_UNIT)
+    data_ratio: float = 1.0
 
     enable_source_domain: bool = True
     enable_language_encoding: bool = True
@@ -66,7 +67,7 @@ class TrainConfig:
     name: str = "TD3_BC"
 
     def __post_init__(self):
-        self.name = f"{self.name}-{self.env}-{str(uuid.uuid4())[:8]}"
+        self.name = f"{self.name}-{self.source_domain}-{self.target_domain}-{str(uuid.uuid4())[:8]}"
         if self.checkpoints_path is not None:
             self.checkpoints_path = os.path.join(self.checkpoints_path, self.name)
 
@@ -465,6 +466,10 @@ def run_TD3_BC(config: TrainConfig):
     # TODO: Find other ways to input prefix and suffix.
     prefix_dict = {'state': config.prefix_annotation, 'action': config.prefix_annotation}
     suffix_dict = {'state': config.suffix_annotation, 'action': config.suffix_annotation}
+    if config.max_timesteps < 100: # This is only for debug
+        source_buffer.retain_data_ratio(data_ratio=512 / source_buffer._size)
+        target_buffer.retain_data_ratio(data_ratio=512 / target_buffer._size)
+
     source_buffer.encode_raw_d4rl_data(config.source_domain, config.source_dataset, tokenizer, language_model,
                                        prefix_dict, suffix_dict)
     target_buffer.encode_raw_d4rl_data(config.target_domain, config.target_dataset, tokenizer, language_model,
@@ -529,7 +534,7 @@ def run_TD3_BC(config: TrainConfig):
 
     # TODO: Implement 'finetune' mode; 'random co-training.
     evaluations = []
-    for t in range(int(config.max_timesteps)):
+    for t in tqdm(range(int(config.max_timesteps)), desc='RL Agent Training'):
         # TODO: modify sample_action_embedding option.
         batch = []
         if config.enable_source_domain:

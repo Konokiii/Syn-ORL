@@ -417,6 +417,6 @@ def get_auto_exp_name(actual_setting, hyper2logname, exp_prefix=None, suffix_bef
                 exp_name_full = exp_name_full + '_%s' % (hyper2logname[hyper] + str(value))
             else:
                 exp_name_full = '%s' % (hyper2logname[hyper] + str(value))
-    exp_name_full = exp_name_full + suffix_before_env_dataset + '_%s_%s' % (
-    actual_setting['env'], actual_setting['dataset'])
+    # exp_name_full = exp_name_full + suffix_before_env_dataset + '_%s_%s' % (
+    # actual_setting['env'], actual_setting['dataset'])
     return exp_name_full

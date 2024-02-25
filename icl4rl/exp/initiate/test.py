@@ -32,7 +32,7 @@ def main():
     settings = [
         'source_dataset', '', ['medium-expert'],
         'target_dataset', '', ['medium-expert'],
-        'data_ratio', 'ratio', [0.5],
+        'data_ratio', 'ratio', [1.0],
         'enable_source_domain', 'src', [True, False],
         'enable_language_encoding', 'enc', [True, False],
         'cross_training_mode', 'mode', ['ZeroShot'],

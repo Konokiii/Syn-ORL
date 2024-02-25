@@ -6,6 +6,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from tqdm import tqdm
+
 TensorBatch = List[torch.Tensor]
 
 
@@ -20,7 +22,9 @@ def add_annotation(raw_vectors: np.ndarray, domain_name: str, prefix_annotation_
     #       (2) Check whether the length of vector and annotation are the same.
     prefix = prefix_annotation_dict[domain_name]
     suffix = suffix_annotation_dict[domain_name]
-    raw_vectors = raw_vectors.reshape(1, -1)
+    # Handle one-dim state during inference
+    if raw_vectors.ndim == 1:
+        raw_vectors = raw_vectors.reshape(1, -1)
     if not (len(prefix) == len(suffix) == raw_vectors.shape[1]):
         raise ValueError("The annotation lists and the dimension of raw vectors must have the same length.")
     prefix_list = [s + ': ' for s in prefix]
@@ -199,11 +203,11 @@ class ReplayBufferProMax(ReplayBuffer):
             print('Action embeddings file does not exist. Start encoding instead.')
 
         # TODO: Combine the following two 'if' clauses.
+        batch_size = 64
         if data['states'] is None:
-            batch_size = 64
             encoded_s = []
             encoded_s_prime = []
-            for i in range(0, self._size, batch_size):
+            for i in tqdm(range(0, self._size, batch_size), desc='Processing States'):
                 idx_ub = min(i + batch_size, self._size)
                 batch_s = self._states[i:idx_ub].cpu().numpy()
                 batch_s_prime = self._next_states[i:idx_ub].cpu().numpy()
@@ -220,9 +224,8 @@ class ReplayBufferProMax(ReplayBuffer):
                 print('State encoding successful. Save to: ', state_file_name)
 
         if data['actions'] is None:
-            batch_size = 64
             encoded_a = []
-            for i in range(0, self._size, batch_size):
+            for i in tqdm(range(0, self._size, batch_size), desc='Processing Actions'):
                 idx_ub = min(i + batch_size, self._size)
                 batch_a = self._actions[i:idx_ub].cpu().numpy()
                 encoded_a.append(
