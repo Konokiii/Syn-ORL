@@ -27,8 +27,8 @@ def add_annotation(raw_vectors: np.ndarray, domain_name: str, prefix_annotation_
         raw_vectors = raw_vectors.reshape(1, -1)
     if not (len(prefix) == len(suffix) == raw_vectors.shape[1]):
         raise ValueError("The annotation lists and the dimension of raw vectors must have the same length.")
-    prefix_list = [s + ': ' for s in prefix]
-    suffix_list = [' ' + s + ',' for s in suffix]
+    prefix_list = [s + ': ' if s != '' else '' for s in prefix]
+    suffix_list = [' ' + s + ',' if s != '' else ',' for s in suffix]
     raw_vectors = raw_vectors.round(decimals=5).astype('str')
     readable = np.char.add(np.char.add(prefix_list, raw_vectors), suffix_list)
     readable = np.apply_along_axis(' '.join, 1, readable).tolist()
