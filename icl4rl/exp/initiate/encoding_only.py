@@ -29,19 +29,17 @@ def main():
     args = parser.parse_args()
     setting = args.setting
 
-    exp_prefix = 'test'
     settings = [
-        'source_dataset', '', ['medium-expert'],
-        'target_dataset', '', ['medium-expert'],
-        'data_ratio', 'ratio', [1.0],
-        'enable_source_domain', 'src', [True, False],
-        'enable_language_encoding', 'enc', [True, False],
-        'cross_training_mode', 'mode', ['ZeroShot'],
-        'seed', '', [0, 1]
+        'encoding_only', '', [True],
+        'enc_batch_size', '', [128],
+        'source_domain', '', ['halfcheetah', 'walker2d', 'hopper'],
+        'source_dataset', '', ['medium-expert', 'medium', 'medium-replay'],
+        'prefix_annotation', '', [MUJOCO_SHORT_DESCRIPTION, NONE],
+        'suffix_annotation', '', [MUJOCO_UNIT, NONE]
     ]
 
     indexes, actual_setting, total, hyper2logname = get_setting_dt(settings, setting)
-    exp_name_full = get_auto_exp_name(actual_setting, hyper2logname, exp_prefix)
+    exp_name_full = get_auto_exp_name(actual_setting, hyper2logname, exp_prefix='')
 
     # config = pyrallis.load(TrainConfig, '/configs/offline/iql/%s/%s_v2.yaml'
     #                        % (actual_setting['env'], actual_setting['dataset'].replace('-', '_')))
@@ -49,11 +47,6 @@ def main():
     """replace values"""
     config = TrainConfig(**actual_setting)
     config.device = DEVICE
-    config.eval_freq = int(2)
-    config.n_episodes = 1
-    config.max_timesteps = 4
-    config.group = 'test_group'
-    config.name = exp_name_full
 
     run_TD3_BC(config)
 

@@ -166,7 +166,7 @@ class ReplayBufferProMax(ReplayBuffer):
 
         print(f"Dataset size: {n_transitions}")
 
-    def encode_raw_d4rl_data(self, domain: str, dataset: str, tokenizer, language_model, prefix, suffix):
+    def encode_raw_d4rl_data(self, domain: str, dataset: str, tokenizer, language_model, prefix, suffix, batch_size=64):
         # Currently do not support language encoding twice.
         if self.has_embedded:
             raise ValueError('Action Denied! ReplayBuffer has contained language embeddings.')
@@ -179,10 +179,10 @@ class ReplayBufferProMax(ReplayBuffer):
 
         # Load saved language embeddings
         folder_path = '/corl/icl4rl/language_embeddings/'
-        state_file_name = '/%s_%s_%s_%s_%s_S.pkl' % (
+        state_file_name = '%s_%s_%s_%s_%s_S.pkl' % (
             domain, dataset, prefix['state']['nickname'], suffix['state']['nickname'],
             language_model.__class__.__name__)
-        action_file_name = '/%s_%s_%s_%s_%s_A.pkl' % (
+        action_file_name = '%s_%s_%s_%s_%s_A.pkl' % (
             domain, dataset, prefix['action']['nickname'], suffix['action']['nickname'],
             language_model.__class__.__name__)
         state_file_path = os.path.join(folder_path, state_file_name)
@@ -203,7 +203,6 @@ class ReplayBufferProMax(ReplayBuffer):
             print('Action embeddings file does not exist. Start encoding instead.')
 
         # TODO: Combine the following two 'if' clauses.
-        batch_size = 64
         if data['states'] is None:
             encoded_s = []
             encoded_s_prime = []

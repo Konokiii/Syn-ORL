@@ -30,8 +30,8 @@ class TrainConfig:
     # New
     source_domain: str = "halfcheetah"
     target_domain: str = 'walker2d'
-    source_dataset: str = 'medium-expert'
-    target_dataset: str = 'medium-expert'
+    source_dataset: str = 'medium-replay'
+    target_dataset: str = 'medium-replay'
     pretrained_LM: str = 'sentence-transformers/all-mpnet-base-v2'
     prefix_annotation: dict = field(default_factory=lambda: MUJOCO_SHORT_DESCRIPTION)
     suffix_annotation: dict = field(default_factory=lambda: MUJOCO_UNIT)
@@ -40,6 +40,9 @@ class TrainConfig:
     enable_source_domain: bool = True
     enable_language_encoding: bool = True
     cross_training_mode: str = 'ZeroShot'
+
+    encoding_only: bool = False
+    enc_batch_size: int = 64
     # Experiment
     device: str = "cuda"
     seed: int = 0  # Sets Gym, PyTorch and Numpy seeds
@@ -471,9 +474,13 @@ def run_TD3_BC(config: TrainConfig):
         target_buffer.retain_data_ratio(data_ratio=512 / target_buffer._size)
 
     source_buffer.encode_raw_d4rl_data(config.source_domain, config.source_dataset, tokenizer, language_model,
-                                       prefix_dict, suffix_dict)
+                                       prefix_dict, suffix_dict, batch_size=config.enc_batch_size)
+    # TODO: Improve encoding_only case.
+    if config.encoding_only:
+        return
+
     target_buffer.encode_raw_d4rl_data(config.target_domain, config.target_dataset, tokenizer, language_model,
-                                       prefix_dict, suffix_dict)
+                                       prefix_dict, suffix_dict, batch_size=config.enc_batch_size)
     target_buffer.retain_data_ratio(data_ratio=config.data_ratio)
 
     if config.checkpoints_path is not None:

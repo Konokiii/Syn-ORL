@@ -68,3 +68,13 @@ MUJOCO_UNIT = {
         'halfcheetah': ['N m' for _ in range(6)]
     }
 }
+
+NONE = {
+    'nickname': 'none',
+    'state': {'walker2d': ['' for _ in range(17)],
+              'halfcheetah': ['' for _ in range(17)]
+              },
+    'action': {'walker2d': ['' for _ in range(6)],
+               'halfcheetah': ['' for _ in range(6)]
+               }
+}
