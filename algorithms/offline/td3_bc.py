@@ -16,15 +16,31 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import wandb
+from transformers import AutoTokenizer, AutoModel
+
+from icl4rl.state_action_annotations import *
+from icl4rl.add_annotation import *
 
 TensorBatch = List[torch.Tensor]
 
 
 @dataclass
 class TrainConfig:
+    # New
+    source_domain: str = "halfcheetah"
+    target_domain: str = 'walker2d'
+    source_dataset: str = 'medium-expert'
+    target_dataset: str = 'medium-expert'
+    pretrained_LM: str = 'sentence-transformers/all-mpnet-base-v2'
+    prefix_annotation = MUJOCO_SHORT_DESCRIPTION
+    suffix_annotation = MUJOCO_UNIT
+    data_ratio = 1.0
+
+    enable_source_domain: bool = True
+    enable_language_encoding: bool = True
+    cross_training_mode: str = 'ZeroShot'
     # Experiment
     device: str = "cuda"
-    env: str = "halfcheetah-medium-expert-v2"  # OpenAI gym environment name
     seed: int = 0  # Sets Gym, PyTorch and Numpy seeds
     eval_freq: int = int(5e3)  # How often (time steps) we evaluate
     n_episodes: int = 10  # How many episodes run during evaluation
@@ -45,7 +61,7 @@ class TrainConfig:
     normalize: bool = True  # Normalize states
     normalize_reward: bool = False  # Normalize reward
     # Wandb logging
-    project: str = "CORL"
+    project: str = "ICL4RL"
     group: str = "TD3_BC-D4RL"
     name: str = "TD3_BC"
 
@@ -71,15 +87,15 @@ def normalize_states(states: np.ndarray, mean: np.ndarray, std: np.ndarray):
 
 
 def wrap_env(
-    env: gym.Env,
-    state_mean: Union[np.ndarray, float] = 0.0,
-    state_std: Union[np.ndarray, float] = 1.0,
-    reward_scale: float = 1.0,
+        env: gym.Env,
+        state_mean: Union[np.ndarray, float] = 0.0,
+        state_std: Union[np.ndarray, float] = 1.0,
+        reward_scale: float = 1.0,
 ) -> gym.Env:
     # PEP 8: E731 do not assign a lambda expression, use a def
     def normalize_state(state):
         return (
-            state - state_mean
+                state - state_mean
         ) / state_std  # epsilon should be already added in std.
 
     def scale_reward(reward):
@@ -94,11 +110,11 @@ def wrap_env(
 
 class ReplayBuffer:
     def __init__(
-        self,
-        state_dim: int,
-        action_dim: int,
-        buffer_size: int,
-        device: str = "cpu",
+            self,
+            state_dim: int,
+            action_dim: int,
+            buffer_size: int,
+            device: str = "cpu",
     ):
         self._buffer_size = buffer_size
         self._pointer = 0
@@ -155,7 +171,7 @@ class ReplayBuffer:
 
 
 def set_seed(
-    seed: int, env: Optional[gym.Env] = None, deterministic_torch: bool = False
+        seed: int, env: Optional[gym.Env] = None, deterministic_torch: bool = False
 ):
     if env is not None:
         env.seed(seed)
@@ -180,7 +196,7 @@ def wandb_init(config: dict) -> None:
 
 @torch.no_grad()
 def eval_actor(
-    env: gym.Env, actor: nn.Module, device: str, n_episodes: int, seed: int
+        env: gym.Env, actor: nn.Module, device: str, n_episodes: int, seed: int, enable_language_encoding: bool, domain: str, tokenizer, language_model, prefix, suffix
 ) -> np.ndarray:
     env.seed(seed)
     actor.eval()
@@ -189,6 +205,8 @@ def eval_actor(
         state, done = env.reset(), False
         episode_reward = 0.0
         while not done:
+            if enable_language_encoding:
+                state = encode(state, domain, tokenizer, language_model, prefix['state'], suffix['state'], device)
             action = actor.act(state, device)
             state, reward, done, _ = env.step(action)
             episode_reward += reward
@@ -265,21 +283,21 @@ class Critic(nn.Module):
 
 class TD3_BC:
     def __init__(
-        self,
-        max_action: float,
-        actor: nn.Module,
-        actor_optimizer: torch.optim.Optimizer,
-        critic_1: nn.Module,
-        critic_1_optimizer: torch.optim.Optimizer,
-        critic_2: nn.Module,
-        critic_2_optimizer: torch.optim.Optimizer,
-        discount: float = 0.99,
-        tau: float = 0.005,
-        policy_noise: float = 0.2,
-        noise_clip: float = 0.5,
-        policy_freq: int = 2,
-        alpha: float = 2.5,
-        device: str = "cpu",
+            self,
+            max_action: float,
+            actor: nn.Module,
+            actor_optimizer: torch.optim.Optimizer,
+            critic_1: nn.Module,
+            critic_1_optimizer: torch.optim.Optimizer,
+            critic_2: nn.Module,
+            critic_2_optimizer: torch.optim.Optimizer,
+            discount: float = 0.99,
+            tau: float = 0.005,
+            policy_noise: float = 0.2,
+            noise_clip: float = 0.5,
+            policy_freq: int = 2,
+            alpha: float = 2.5,
+            device: str = "cpu",
     ):
         self.actor = actor
         self.actor_target = copy.deepcopy(actor)
@@ -387,19 +405,11 @@ class TD3_BC:
         self.total_it = state_dict["total_it"]
 
 
-@pyrallis.wrap()
-def train(config: TrainConfig):
-    env = gym.make(config.env)
+def preprocess_states_and_actions(dataset, env_name: str, env, normalize_reward: bool = False, normalize: bool = True):
+    if normalize_reward:
+        modify_reward(dataset, env_name)
 
-    state_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.shape[0]
-
-    dataset = d4rl.qlearning_dataset(env)
-
-    if config.normalize_reward:
-        modify_reward(dataset, config.env)
-
-    if config.normalize:
+    if normalize:
         state_mean, state_std = compute_mean_std(dataset["observations"], eps=1e-3)
     else:
         state_mean, state_std = 0, 1
@@ -410,16 +420,56 @@ def train(config: TrainConfig):
     dataset["next_observations"] = normalize_states(
         dataset["next_observations"], state_mean, state_std
     )
-    env = wrap_env(env, state_mean=state_mean, state_std=state_std)
-    replay_buffer = ReplayBuffer(
-        state_dim,
-        action_dim,
+    return wrap_env(env, state_mean=state_mean, state_std=state_std)
+
+
+# @pyrallis.wrap()
+def run_TD3_BC(config: TrainConfig):
+    # TODO: Write the following two blocks into the same class object. Note eval_actor and encode functions.
+    source_env_name = '%s-%s-v2' % (config.source_domain, config.source_dataset)
+    source_env = gym.make(source_env_name)
+    source_state_dim = source_env.observation_space.shape[0]
+    source_action_dim = source_env.action_space.shape[0]
+    source_raw_dataset = d4rl.qlearning_dataset(source_env)
+    source_env = preprocess_states_and_actions(source_raw_dataset, source_env_name, source_env, config.normalize_reward,
+                                               config.normalize)
+    source_buffer = ReplayBufferProMax(
+        source_state_dim,
+        source_action_dim,
         config.buffer_size,
         config.device,
     )
-    replay_buffer.load_d4rl_dataset(dataset)
+    source_buffer.load_d4rl_dataset(source_raw_dataset)
+    source_max_action = float(source_env.action_space.high[0])
 
-    max_action = float(env.action_space.high[0])
+    target_env_name = '%s-%s-v2' % (config.target_domain, config.target_dataset)
+    target_env = gym.make(target_env_name)
+    target_state_dim = target_env.observation_space.shape[0]
+    target_action_dim = target_env.action_space.shape[0]
+    target_raw_dataset = d4rl.qlearning_dataset(target_env)
+    target_env = preprocess_states_and_actions(target_raw_dataset, target_env_name, target_env, config.normalize_reward,
+                                               config.normalize)
+    target_buffer = ReplayBufferProMax(
+        target_state_dim,
+        target_action_dim,
+        config.buffer_size,
+        config.device,
+    )
+    target_buffer.load_d4rl_dataset(target_raw_dataset)
+    target_max_action = float(target_env.action_space.high[0])
+
+    tokenizer = AutoTokenizer.from_pretrained(config.pretrained_LM)
+    language_model = AutoModel.from_pretrained(config.pretrained_LM).to(config.device)
+    language_model.eval()
+    language_embedding_dim = language_model.config.hidden_size
+    # TODO: Find other ways to input prefix and suffix.
+    prefix_dict = {'state': config.prefix_annotation, 'action': config.prefix_annotation}
+    suffix_dict = {'state': config.suffix_annotation, 'action': config.suffix_annotation}
+    source_buffer.encode_raw_d4rl_data(config.source_domain, config.source_dataset, tokenizer, language_model,
+                                       prefix_dict, suffix_dict)
+    target_buffer.encode_raw_d4rl_data(config.target_domain, config.target_dataset, tokenizer, language_model,
+                                       prefix_dict, suffix_dict)
+    target_buffer.retain_data_ratio(data_ratio=config.data_ratio)
 
     if config.checkpoints_path is not None:
         print(f"Checkpoints path: {config.checkpoints_path}")
@@ -429,18 +479,22 @@ def train(config: TrainConfig):
 
     # Set seeds
     seed = config.seed
-    set_seed(seed, env)
+    set_seed(seed, target_env)
 
-    actor = Actor(state_dim, action_dim, max_action).to(config.device)
+    # TODO: Modify the action dimension and max action when having decoder.
+    input_state_dim = language_embedding_dim if config.enable_language_encoding else target_state_dim
+
+    actor = Actor(input_state_dim, target_action_dim, target_max_action).to(config.device)
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=3e-4)
 
-    critic_1 = Critic(state_dim, action_dim).to(config.device)
+    critic_1 = Critic(input_state_dim, target_action_dim).to(config.device)
     critic_1_optimizer = torch.optim.Adam(critic_1.parameters(), lr=3e-4)
-    critic_2 = Critic(state_dim, action_dim).to(config.device)
+    critic_2 = Critic(input_state_dim, target_action_dim).to(config.device)
     critic_2_optimizer = torch.optim.Adam(critic_2.parameters(), lr=3e-4)
 
+    # TODO: kwargs also contains max_action.
     kwargs = {
-        "max_action": max_action,
+        "max_action": target_max_action,
         "actor": actor,
         "actor_optimizer": actor_optimizer,
         "critic_1": critic_1,
@@ -451,15 +505,16 @@ def train(config: TrainConfig):
         "tau": config.tau,
         "device": config.device,
         # TD3
-        "policy_noise": config.policy_noise * max_action,
-        "noise_clip": config.noise_clip * max_action,
+        "policy_noise": config.policy_noise * target_max_action,
+        "noise_clip": config.noise_clip * target_max_action,
         "policy_freq": config.policy_freq,
         # TD3 + BC
         "alpha": config.alpha,
     }
 
     print("---------------------------------------")
-    print(f"Training TD3 + BC, Env: {config.env}, Seed: {seed}")
+    print(
+        f"Training TD3 + BC, Source_Domain: {config.source_domain}, Target_Domain: {config.target_domain}, Seed: {seed}")
     print("---------------------------------------")
 
     # Initialize actor
@@ -472,9 +527,22 @@ def train(config: TrainConfig):
 
     wandb_init(asdict(config))
 
+    # TODO: Implement 'finetune' mode; 'random co-training.
     evaluations = []
     for t in range(int(config.max_timesteps)):
-        batch = replay_buffer.sample(config.batch_size)
+        # TODO: modify sample_action_embedding option.
+        batch = []
+        if config.enable_source_domain:
+            if config.cross_training_mode == 'SymCoT':
+                source_batch = source_buffer.sample(config.batch_size // 2, sample_state_embedding=config.enable_language_encoding)
+                target_batch = target_buffer.sample(config.batch_size // 2, sample_state_embedding=config.enable_language_encoding)
+                batch = [torch.cat(i, dim=0) for i in zip(source_batch, target_batch)]
+            elif config.cross_training_mode == 'RandomCoT':
+                pass
+            elif config.cross_training_mode == 'ZeroShot':
+                batch = source_buffer.sample(config.batch_size, sample_state_embedding=config.enable_language_encoding)
+        else:  # Target domain data training only
+            batch = target_buffer.sample(config.batch_size, sample_state_embedding=config.enable_language_encoding)
         batch = [b.to(config.device) for b in batch]
         log_dict = trainer.train(batch)
         wandb.log(log_dict, step=trainer.total_it)
@@ -482,14 +550,20 @@ def train(config: TrainConfig):
         if (t + 1) % config.eval_freq == 0:
             print(f"Time steps: {t + 1}")
             eval_scores = eval_actor(
-                env,
+                target_env,
                 actor,
                 device=config.device,
                 n_episodes=config.n_episodes,
                 seed=config.seed,
+                enable_language_encoding=config.enable_language_encoding,
+                domain=config.target_domain,
+                tokenizer=tokenizer,
+                language_model=language_model,
+                prefix=config.prefix_annotation,
+                suffix=config.suffix_annotation
             )
             eval_score = eval_scores.mean()
-            normalized_eval_score = env.get_normalized_score(eval_score) * 100.0
+            normalized_eval_score = target_env.get_normalized_score(eval_score) * 100.0
             evaluations.append(normalized_eval_score)
             print("---------------------------------------")
             print(
@@ -509,6 +583,5 @@ def train(config: TrainConfig):
                 step=trainer.total_it,
             )
 
-
-if __name__ == "__main__":
-    train()
+# if __name__ == "__main__":
+#     train()

@@ -10,3 +10,8 @@ iql1_mdp_qv = 'iql-1_preMmdp_fd_QV_ns100_pt1'
 iql1_mdp_q = 'iql-1_preMmdp_fd_onlyQ_ns100_pt1'
 iql1_mdp_v = 'iql-1_preMmdp_fd_onlyV_ns100_pt1'
 
+# 2023/11/9: Remove cosine lr scheduler
+iql1_nocos_baseline = 'iql-1_cosLRFalse_preMnone'
+iql1_nocos_mdp_qv = 'iql-1_cosLRFalse_preMmdp_fd_QV_ns100_pt1'
+iql1_nocos_mdp_q = 'iql-1_cosLRFalse_preMmdp_fd_onlyQ_ns100_pt1'
+iql1_nocos_mdp_v = 'iql-1_cosLRFalse_preMmdp_fd_onlyV_ns100_pt1'

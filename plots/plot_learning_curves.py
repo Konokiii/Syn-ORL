@@ -83,17 +83,17 @@ def plot_iql_performance_curves(labels, base_names, env_names):
 
 
 labels = [
-    'IQL-1',
-    'IQL-1_Q',
-    'IQL-1_V',
-    'IQL-1_QV',
+    'IQL1',
+    'IQL1_Q',
+    'IQL1-Nc',
+    'IQL1-Nc_Q',
 ]
 
 base_names = [
     iql1_baseline,
     iql1_mdp_q,
-    iql1_mdp_v,
-    iql1_mdp_qv
+    iql1_nocos_baseline,
+    iql1_nocos_mdp_q
 ]
 
 env_names = d4rl_12_datasets_envs
