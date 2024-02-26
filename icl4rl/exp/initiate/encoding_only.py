@@ -29,23 +29,23 @@ def main():
     args = parser.parse_args()
     setting = args.setting
 
-    # settings = [
-    #     'encoding_only', '', [True],
-    #     'enc_batch_size', '', [128],
-    #     'source_domain', '', ['halfcheetah', 'walker2d'],
-    #     'source_dataset', '', ['medium-expert', 'medium', 'medium-replay'],
-    #     'prefix_annotation', '', [MUJOCO_SHORT_DESCRIPTION, NONE],
-    #     'suffix_annotation', '', [MUJOCO_UNIT, NONE]
-    # ]
-
     settings = [
         'encoding_only', '', [True],
         'enc_batch_size', '', [1024],
         'source_domain', '', ['halfcheetah', 'walker2d'],
-        'source_dataset', '', ['medium-expert'],
+        'source_dataset', '', ['medium-expert', 'medium', 'medium-replay'],
         'prefix_annotation', '', [MUJOCO_SHORT_DESCRIPTION, NONE],
         'suffix_annotation', '', [MUJOCO_UNIT, NONE]
     ]
+
+    # settings = [
+    #     'encoding_only', '', [True],
+    #     'enc_batch_size', '', [1024],
+    #     'source_domain', '', ['halfcheetah', 'walker2d'],
+    #     'source_dataset', '', ['medium-expert'],
+    #     'prefix_annotation', '', [MUJOCO_SHORT_DESCRIPTION, NONE],
+    #     'suffix_annotation', '', [MUJOCO_UNIT, NONE]
+    # ]
 
     indexes, actual_setting, total, hyper2logname = get_setting_dt(settings, setting)
     exp_name_full = get_auto_exp_name(actual_setting, hyper2logname, exp_prefix='')

@@ -217,11 +217,11 @@ class ReplayBufferProMax(ReplayBuffer):
                                    prefix['state']['state'], suffix['state']['state'], self._device)
                 encoded_s_prime = encode(batch_s_prime, domain, tokenizer, language_model,
                                          prefix['state']['state'], suffix['state']['state'], self._device)
-                if not data['states']:
+                if data['states'] is None:
                     data['states'] = encoded_s
                 else:
                     data['states'] = np.concatenate((data['states'], encoded_s), axis=0)
-                if not data['next_states']:
+                if data['next_states'] is None:
                     data['next_states'] = encoded_s_prime
                 else:
                     data['next_states'] = np.concatenate((data['next_states'], encoded_s_prime), axis=0)
@@ -236,7 +236,7 @@ class ReplayBufferProMax(ReplayBuffer):
                 batch_a = self._actions[i:idx_ub].cpu().numpy()
                 encoded_a = encode(batch_a, domain, tokenizer, language_model, prefix['action']['action'],
                                    suffix['action']['action'], self._device)
-                if not data['actions']:
+                if data['actions'] is None:
                     data['actions'] = encoded_a
                 else:
                     data['actions'] = np.concatenate((data['actions'], encoded_a), axis=0)
