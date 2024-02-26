@@ -166,7 +166,8 @@ class ReplayBufferProMax(ReplayBuffer):
 
         print(f"Dataset size: {n_transitions}")
 
-    def encode_raw_d4rl_data(self, domain: str, dataset: str, tokenizer, language_model, prefix, suffix, batch_size=64):
+    def encode_raw_d4rl_data(self, domain: str, dataset: str, tokenizer, language_model, prefix, suffix, batch_size=64,
+                             encoding_only=False):
         # Currently do not support language encoding twice.
         if self.has_embedded:
             raise ValueError('Action Denied! ReplayBuffer has contained language embeddings.')
@@ -188,6 +189,10 @@ class ReplayBufferProMax(ReplayBuffer):
         state_file_path = os.path.join(folder_path, state_file_name)
         action_file_path = os.path.join(folder_path, action_file_name)
 
+        print('Attempt to encode data from %s_%s_%s_%s_%s.' % (
+            domain, dataset, prefix['state']['nickname'], suffix['state']['nickname'],
+            language_model.__class__.__name__))
+
         if os.path.exists(state_file_path):
             with open(state_file_path, 'rb') as file:
                 data['states'], data['next_states'] = pickle.load(file)
@@ -197,49 +202,55 @@ class ReplayBufferProMax(ReplayBuffer):
 
         if os.path.exists(action_file_path):
             with open(action_file_path, 'rb') as file:
-                data['action'] = pickle.load(file)
+                data['actions'] = pickle.load(file)
             print('Action embeddings successfully loaded from: ', action_file_name)
         else:
             print('Action embeddings file does not exist. Start encoding instead.')
 
         # TODO: Combine the following two 'if' clauses.
         if data['states'] is None:
-            encoded_s = []
-            encoded_s_prime = []
             for i in tqdm(range(0, self._size, batch_size), desc='Processing States'):
                 idx_ub = min(i + batch_size, self._size)
                 batch_s = self._states[i:idx_ub].cpu().numpy()
                 batch_s_prime = self._next_states[i:idx_ub].cpu().numpy()
-                encoded_s.append(
-                    encode(batch_s, domain, tokenizer, language_model, prefix['state']['state'],
-                           suffix['state']['state'], self._device))
-                encoded_s_prime.append(
-                    encode(batch_s_prime, domain, tokenizer, language_model, prefix['state']['state'],
-                           suffix['state']['state'], self._device))
-            data['states'] = np.concatenate(encoded_s, axis=0)
-            data['next_states'] = np.concatenate(encoded_s_prime, axis=0)
+                encoded_s = encode(batch_s, domain, tokenizer, language_model,
+                                   prefix['state']['state'], suffix['state']['state'], self._device)
+                encoded_s_prime = encode(batch_s_prime, domain, tokenizer, language_model,
+                                         prefix['state']['state'], suffix['state']['state'], self._device)
+                if not data['states']:
+                    data['states'] = encoded_s
+                else:
+                    data['states'] = np.concatenate((data['states'], encoded_s), axis=0)
+                if not data['next_states']:
+                    data['next_states'] = encoded_s_prime
+                else:
+                    data['next_states'] = np.concatenate((data['next_states'], encoded_s_prime), axis=0)
+
             with open(state_file_path, 'wb') as file:
                 pickle.dump((data['states'], data['next_states']), file)
                 print('State encoding successful. Save to: ', state_file_name)
 
         if data['actions'] is None:
-            encoded_a = []
             for i in tqdm(range(0, self._size, batch_size), desc='Processing Actions'):
                 idx_ub = min(i + batch_size, self._size)
                 batch_a = self._actions[i:idx_ub].cpu().numpy()
-                encoded_a.append(
-                    encode(batch_a, domain, tokenizer, language_model, prefix['action']['action'],
-                           suffix['action']['action'], self._device))
-            data['actions'] = np.concatenate(encoded_a, axis=0)
+                encoded_a = encode(batch_a, domain, tokenizer, language_model, prefix['action']['action'],
+                                   suffix['action']['action'], self._device)
+                if not data['actions']:
+                    data['actions'] = encoded_a
+                else:
+                    data['actions'] = np.concatenate((data['actions'], encoded_a), axis=0)
+
             with open(action_file_path, 'wb') as file:
                 pickle.dump(data['actions'], file)
                 print('Action encoding successful. Save to: ', action_file_name)
 
-        self._state_embeddings = self._to_tensor(data["states"])
-        self._action_embeddings = self._to_tensor(data["actions"])
-        self._next_state_embeddings = self._to_tensor(data["next_states"])
-        self.has_embedded = True
-        print('Language embeddings loaded for domain %s' % domain)
+        if not encoding_only:
+            self._state_embeddings = self._to_tensor(data["states"])
+            self._action_embeddings = self._to_tensor(data["actions"])
+            self._next_state_embeddings = self._to_tensor(data["next_states"])
+            self.has_embedded = True
+            print('Language embeddings loaded for domain %s' % domain)
 
     def retain_data_ratio(self, data_ratio):
         # Keep 'data_ratio' many of data in current buffer
@@ -249,7 +260,7 @@ class ReplayBufferProMax(ReplayBuffer):
         if data_ratio == 1.0:
             return
         np.random.seed(0)
-        use_size = int(data_ratio*self._size)
+        use_size = int(data_ratio * self._size)
         indices = np.random.choice(self._size, use_size, replace=False)
         self._states = self._states[indices]
         self._next_states = self._next_states[indices]
@@ -265,7 +276,8 @@ class ReplayBufferProMax(ReplayBuffer):
         self._pointer = use_size
         print('Retain %f of original buffer data: ', use_size)
 
-    def sample(self, batch_size: int, sample_state_embedding: bool = False, sample_action_embedding: bool = False) -> TensorBatch:
+    def sample(self, batch_size: int, sample_state_embedding: bool = False,
+               sample_action_embedding: bool = False) -> TensorBatch:
         indices = np.random.randint(0, min(self._size, self._pointer), size=batch_size)
         if sample_state_embedding:
             if not self.has_embedded:

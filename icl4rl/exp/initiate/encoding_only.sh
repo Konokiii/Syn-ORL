@@ -3,11 +3,11 @@
 #SBATCH --time=8:00:00
 #SBATCH --nodes=1
 #SBATCH --exclude=gm[001-025]
-#SBATCH --mem=8GB
+#SBATCH --mem=64GB
 #SBATCH --mail-type=ALL # select which email types will be sent
 #SBATCH --mail-user=zd662@nyu.edu # NOTE: put your netid here if you want emails
 
-#SBATCH --array=0-35 # here the number depends on number of tasks in the array, e.g. 0-11 will create 12 tasks
+#SBATCH --array=0-7 # here the number depends on number of tasks in the array, e.g. 0-11 will create 12 tasks
 #SBATCH --output=../logs/%A_%a.out # %A is SLURM_ARRAY_JOB_ID, %a is SLURM_ARRAY_TASK_ID,
 #SBATCH --error=../logs/%A_%a.err # MAKE SURE WHEN YOU RUN THIS, ../train_logs IS A VALID PATH
 

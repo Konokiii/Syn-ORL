@@ -474,7 +474,7 @@ def run_TD3_BC(config: TrainConfig):
         target_buffer.retain_data_ratio(data_ratio=512 / target_buffer._size)
 
     source_buffer.encode_raw_d4rl_data(config.source_domain, config.source_dataset, tokenizer, language_model,
-                                       prefix_dict, suffix_dict, batch_size=config.enc_batch_size)
+                                       prefix_dict, suffix_dict, batch_size=config.enc_batch_size, encoding_only=config.encoding_only)
     # TODO: Improve encoding_only case.
     if config.encoding_only:
         return
