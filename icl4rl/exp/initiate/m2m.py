@@ -33,8 +33,8 @@ def main():
         'source_domain', '', ['halfcheetah'],
         'target_domain', '', ['walker2d'],
 
-        'source_dataset', '', ['medium-replay'],
-        'target_dataset', '', ['medium-replay'],
+        'source_dataset', '', ['medium'],
+        'target_dataset', '', ['medium'],
 
         'data_ratio', 'R', [0.01, 0.1, 1.0],
         'prefix_name', 'PF', ['mjc_short', 'none'],

@@ -26,5 +26,5 @@ echo "Job ID: ${SLURM_ARRAY_TASK_ID}"
 singularity exec --nv -B /scratch/$USER/Syn-ORL:/corl -B /scratch/$USER/cql-sandbox/opt/conda/lib/python3.8/site-packages/mujoco_py/:/opt/conda/lib/python3.8/site-packages/mujoco_py/ /scratch/$USER/cql-sandbox bash -c "
 cd /corl
 export PYTHONPATH=$PYTHONPATH:/corl
-python icl4rl/exp/initiate/mr2mr.py --setting ${SLURM_ARRAY_TASK_ID}
+python icl4rl/exp/initiate/me2me.py --setting ${SLURM_ARRAY_TASK_ID}
 "
