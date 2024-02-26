@@ -29,31 +29,50 @@ def main():
     args = parser.parse_args()
     setting = args.setting
 
-    exp_prefix = 'test'
     settings = [
-        'source_dataset', '', ['medium-expert'],
-        'target_dataset', '', ['medium-expert'],
-        'data_ratio', 'ratio', [1.0],
-        'enable_source_domain', 'src', [True, False],
+        'source_domain', '', ['halfcheetah', 'walker2d'],
+        'target_domain', '', ['walker2d', 'halfcheetah'],
+
+        'source_dataset', '', ['medium-replay'],
+        'target_dataset', '', ['medium-replay'],
+
+        'data_ratio', 'R', [0.01, 0.1, 1.0],
+        'prefix_name', 'PF', ['mjc_short', 'none'],
+        'suffix_name', 'SF', ['mjc_unit', 'none'],
+
         'enable_language_encoding', 'enc', [True, False],
-        'cross_training_mode', 'mode', ['ZeroShot'],
-        'seed', '', [0, 1]
+        'cross_training_mode', 'scr', ['ZeroShot', 'SymCoT', 'None'],
+
+        'seed', 'S', [0, 1, 2]
     ]
 
-    indexes, actual_setting, total, hyper2logname = get_setting_dt(settings, setting)
-    exp_name_full = get_auto_exp_name(actual_setting, hyper2logname, exp_prefix)
+    env2short = {'halfcheetah': 'hal',
+                 'walker2d': 'w',
+                 'hopper': 'hop'}
+    data2short = {'medium': 'm',
+                  'medium-replay': 'mr',
+                  'medium-expert': 'me'}
 
+    indexes, actual_setting, total, hyper2logname = get_setting_dt(settings, setting)
+    # Terminate undesirable setups
+    if actual_setting['source_domain'] == actual_setting['target_domain']:
+        print(f'Skip setup {setting}. Source and target domains are the same.')
+        return
+    if actual_setting['source_dataset'] != actual_setting['target_dataset']:
+        print(f'Skip setup {setting}. Source and target datasets differ.')
+        return
+
+    # exp_name_full = get_auto_exp_name(actual_setting, hyper2logname, exp_prefix='')
     # config = pyrallis.load(TrainConfig, '/configs/offline/iql/%s/%s_v2.yaml'
     #                        % (actual_setting['env'], actual_setting['dataset'].replace('-', '_')))
 
     """replace values"""
     config = TrainConfig(**actual_setting)
     config.device = DEVICE
-    config.eval_freq = int(2)
-    config.n_episodes = 1
-    config.max_timesteps = 4
-    config.group = 'test_group'
-    config.name = exp_name_full
+
+    config.group = '%s2%s-%s2%s' % (env2short[config.source_domain], env2short[config.target_domain],
+                                    data2short[config.source_dataset], data2short[config.target_dataset])
+    config.name = '_'.join([v+str(actual_setting[k]) for k,v in hyper2logname.items() if v != ''])
 
     run_TD3_BC(config)
 

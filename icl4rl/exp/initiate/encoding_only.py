@@ -34,8 +34,8 @@ def main():
         'enc_batch_size', '', [1024],
         'source_domain', '', ['halfcheetah', 'walker2d'],
         'source_dataset', '', ['medium-expert', 'medium', 'medium-replay'],
-        'prefix_annotation', '', [MUJOCO_SHORT_DESCRIPTION, NONE],
-        'suffix_annotation', '', [MUJOCO_UNIT, NONE]
+        'prefix_name', '', ['mjc_short', 'none'],
+        'suffix_name', '', ['mjc_unit', 'none']
     ]
 
     # settings = [

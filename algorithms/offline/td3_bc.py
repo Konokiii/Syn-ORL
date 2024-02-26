@@ -33,13 +33,12 @@ class TrainConfig:
     source_dataset: str = 'medium-replay'
     target_dataset: str = 'medium-replay'
     pretrained_LM: str = 'sentence-transformers/all-mpnet-base-v2'
-    prefix_annotation: dict = field(default_factory=lambda: MUJOCO_SHORT_DESCRIPTION)
-    suffix_annotation: dict = field(default_factory=lambda: MUJOCO_UNIT)
+    prefix_name: str = 'none'
+    suffix_name: str = 'none'
     data_ratio: float = 1.0
 
-    enable_source_domain: bool = True
     enable_language_encoding: bool = True
-    cross_training_mode: str = 'ZeroShot'
+    cross_training_mode: str = 'ZeroShot'  # Choose from 'ZeroShot', 'SymCoT', 'None'
 
     encoding_only: bool = False
     enc_batch_size: int = 64
@@ -200,7 +199,8 @@ def wandb_init(config: dict) -> None:
 
 @torch.no_grad()
 def eval_actor(
-        env: gym.Env, actor: nn.Module, device: str, n_episodes: int, seed: int, enable_language_encoding: bool, domain: str, tokenizer, language_model, prefix, suffix
+        env: gym.Env, actor: nn.Module, device: str, n_episodes: int, seed: int, enable_language_encoding: bool,
+        domain: str, tokenizer, language_model, prefix_name, suffix_name
 ) -> np.ndarray:
     env.seed(seed)
     actor.eval()
@@ -210,7 +210,9 @@ def eval_actor(
         episode_reward = 0.0
         while not done:
             if enable_language_encoding:
-                state = encode(state, domain, tokenizer, language_model, prefix['state'], suffix['state'], device)
+                prefix = ALL_ANNOTATIONS_DICT[prefix_name]['state']
+                suffix = ALL_ANNOTATIONS_DICT[suffix_name]['state']
+                state = encode(state, domain, tokenizer, language_model, prefix, suffix, device)
             action = actor.act(state, device)
             state, reward, done, _ = env.step(action)
             episode_reward += reward
@@ -466,21 +468,20 @@ def run_TD3_BC(config: TrainConfig):
     language_model = AutoModel.from_pretrained(config.pretrained_LM).to(config.device)
     language_model.eval()
     language_embedding_dim = language_model.config.hidden_size
-    # TODO: Find other ways to input prefix and suffix.
-    prefix_dict = {'state': config.prefix_annotation, 'action': config.prefix_annotation}
-    suffix_dict = {'state': config.suffix_annotation, 'action': config.suffix_annotation}
+    # TODO: (1)Find ways to support different annotations for state and action;
+    #       (2)Find ways to support different annoations for source and target domain
     if config.max_timesteps < 100: # This is only for debug
         source_buffer.retain_data_ratio(data_ratio=512 / source_buffer._size)
         target_buffer.retain_data_ratio(data_ratio=512 / target_buffer._size)
 
     source_buffer.encode_raw_d4rl_data(config.source_domain, config.source_dataset, tokenizer, language_model,
-                                       prefix_dict, suffix_dict, batch_size=config.enc_batch_size, encoding_only=config.encoding_only)
+                                       config.prefix_name, config.suffix_name, batch_size=config.enc_batch_size, encoding_only=config.encoding_only)
     # TODO: Improve encoding_only case.
     if config.encoding_only:
         return
 
     target_buffer.encode_raw_d4rl_data(config.target_domain, config.target_dataset, tokenizer, language_model,
-                                       prefix_dict, suffix_dict, batch_size=config.enc_batch_size)
+                                       config.prefix_name, config.suffix_name, batch_size=config.enc_batch_size)
     target_buffer.retain_data_ratio(data_ratio=config.data_ratio)
 
     if config.checkpoints_path is not None:
@@ -544,16 +545,16 @@ def run_TD3_BC(config: TrainConfig):
     for t in tqdm(range(int(config.max_timesteps)), desc='RL Agent Training'):
         # TODO: modify sample_action_embedding option.
         batch = []
-        if config.enable_source_domain:
-            if config.cross_training_mode == 'SymCoT':
-                source_batch = source_buffer.sample(config.batch_size // 2, sample_state_embedding=config.enable_language_encoding)
-                target_batch = target_buffer.sample(config.batch_size // 2, sample_state_embedding=config.enable_language_encoding)
-                batch = [torch.cat(i, dim=0) for i in zip(source_batch, target_batch)]
-            elif config.cross_training_mode == 'RandomCoT':
-                pass
-            elif config.cross_training_mode == 'ZeroShot':
-                batch = source_buffer.sample(config.batch_size, sample_state_embedding=config.enable_language_encoding)
-        else:  # Target domain data training only
+
+        if config.cross_training_mode == 'SymCoT':
+            source_batch = source_buffer.sample(config.batch_size // 2, sample_state_embedding=config.enable_language_encoding)
+            target_batch = target_buffer.sample(config.batch_size // 2, sample_state_embedding=config.enable_language_encoding)
+            batch = [torch.cat(i, dim=0) for i in zip(source_batch, target_batch)]
+        elif config.cross_training_mode == 'RandomCoT':
+            pass
+        elif config.cross_training_mode == 'ZeroShot':
+            batch = source_buffer.sample(config.batch_size, sample_state_embedding=config.enable_language_encoding)
+        elif config.cross_training_mode == 'None':  # Target domain data training only
             batch = target_buffer.sample(config.batch_size, sample_state_embedding=config.enable_language_encoding)
         batch = [b.to(config.device) for b in batch]
         log_dict = trainer.train(batch)
@@ -571,8 +572,8 @@ def run_TD3_BC(config: TrainConfig):
                 domain=config.target_domain,
                 tokenizer=tokenizer,
                 language_model=language_model,
-                prefix=config.prefix_annotation,
-                suffix=config.suffix_annotation
+                prefix_name=config.prefix_name,
+                suffix_name=config.suffix_name
             )
             eval_score = eval_scores.mean()
             normalized_eval_score = target_env.get_normalized_score(eval_score) * 100.0

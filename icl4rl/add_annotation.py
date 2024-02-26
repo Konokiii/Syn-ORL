@@ -7,28 +7,19 @@ import torch
 import torch.nn.functional as F
 
 from tqdm import tqdm
+from icl4rl.state_action_annotations import ALL_ANNOTATIONS_DICT
 
 TensorBatch = List[torch.Tensor]
 
 
-def add_annotation(raw_vectors: np.ndarray, domain_name: str, prefix_annotation_dict: Optional[Dict[str, list]] = None,
-                   suffix_annotation_dict: Optional[Dict[str, list]] = None):
-    if prefix_annotation_dict is not None and prefix_annotation_dict.get(domain_name, None) is None:
-        raise KeyError('Unsupported domain prefix annotation.')
-    if suffix_annotation_dict is not None and suffix_annotation_dict.get(domain_name, None) is None:
-        raise KeyError('Unsupported domain suffix annotation.')
-    # TODO: (1) Handle the case when either of the annotation_dict is None.
-    #       For example, initialize them as ['' for _ in range]
-    #       (2) Check whether the length of vector and annotation are the same.
-    prefix = prefix_annotation_dict[domain_name]
-    suffix = suffix_annotation_dict[domain_name]
+def add_annotation(raw_vectors: np.ndarray, prefix_annotations: list, suffix_annotations: list):
     # Handle one-dim state during inference
     if raw_vectors.ndim == 1:
         raw_vectors = raw_vectors.reshape(1, -1)
-    if not (len(prefix) == len(suffix) == raw_vectors.shape[1]):
+    if not (len(prefix_annotations) == len(suffix_annotations) == raw_vectors.shape[1]):
         raise ValueError("The annotation lists and the dimension of raw vectors must have the same length.")
-    prefix_list = [s + ': ' if s != '' else '' for s in prefix]
-    suffix_list = [' ' + s + ',' if s != '' else ',' for s in suffix]
+    prefix_list = [s + ': ' if s != '' else '' for s in prefix_annotations]
+    suffix_list = [' ' + s + ',' if s != '' else ',' for s in suffix_annotations]
     raw_vectors = raw_vectors.round(decimals=5).astype('str')
     readable = np.char.add(np.char.add(prefix_list, raw_vectors), suffix_list)
     readable = np.apply_along_axis(' '.join, 1, readable).tolist()
@@ -43,9 +34,16 @@ def LM_mean_pooling(model_output, attention_mask):
 
 @torch.no_grad()
 def encode(raw_vectors: np.ndarray, domain_name: str, tokenizer, language_model,
-           prefix_annotation_dict: Optional[Dict[str, list]] = None,
-           suffix_annotation_dict: Optional[Dict[str, list]] = None, device: str = 'cpu'):
-    readable = add_annotation(raw_vectors, domain_name, prefix_annotation_dict, suffix_annotation_dict)
+           prefix_annotation_dict: Optional[Dict[str, list]],
+           suffix_annotation_dict: Optional[Dict[str, list]], device: str = 'cpu'):
+    if prefix_annotation_dict.get(domain_name, None) is None:
+        raise KeyError('Unsupported domain prefix annotation.')
+    if suffix_annotation_dict.get(domain_name, None) is None:
+        raise KeyError('Unsupported domain suffix annotation.')
+
+    prefix_annotations = prefix_annotation_dict[domain_name]
+    suffix_annotations = suffix_annotation_dict[domain_name]
+    readable = add_annotation(raw_vectors, prefix_annotations, suffix_annotations)
     lm_inputs = tokenizer(readable, padding=True, truncation=True, return_tensors='pt').to(device)
     lm_outputs = language_model(**lm_inputs)
     embeddings = LM_mean_pooling(lm_outputs, lm_inputs['attention_mask'])
@@ -166,7 +164,7 @@ class ReplayBufferProMax(ReplayBuffer):
 
         print(f"Dataset size: {n_transitions}")
 
-    def encode_raw_d4rl_data(self, domain: str, dataset: str, tokenizer, language_model, prefix, suffix, batch_size=64,
+    def encode_raw_d4rl_data(self, domain: str, dataset: str, tokenizer, language_model, prefix_name, suffix_name, batch_size=64,
                              encoding_only=False):
         # Currently do not support language encoding twice.
         if self.has_embedded:
@@ -181,16 +179,16 @@ class ReplayBufferProMax(ReplayBuffer):
         # Load saved language embeddings
         folder_path = '/corl/icl4rl/language_embeddings/'
         state_file_name = '%s_%s_%s_%s_%s_S.pkl' % (
-            domain, dataset, prefix['state']['nickname'], suffix['state']['nickname'],
+            domain, dataset, prefix_name, suffix_name,
             language_model.__class__.__name__)
         action_file_name = '%s_%s_%s_%s_%s_A.pkl' % (
-            domain, dataset, prefix['action']['nickname'], suffix['action']['nickname'],
+            domain, dataset, prefix_name, suffix_name,
             language_model.__class__.__name__)
         state_file_path = os.path.join(folder_path, state_file_name)
         action_file_path = os.path.join(folder_path, action_file_name)
 
         print('Attempt to encode data from %s_%s_%s_%s_%s.' % (
-            domain, dataset, prefix['state']['nickname'], suffix['state']['nickname'],
+            domain, dataset, prefix_name, suffix_name,
             language_model.__class__.__name__))
 
         if os.path.exists(state_file_path):
@@ -214,9 +212,9 @@ class ReplayBufferProMax(ReplayBuffer):
                 batch_s = self._states[i:idx_ub].cpu().numpy()
                 batch_s_prime = self._next_states[i:idx_ub].cpu().numpy()
                 encoded_s = encode(batch_s, domain, tokenizer, language_model,
-                                   prefix['state']['state'], suffix['state']['state'], self._device)
+                                   ALL_ANNOTATIONS_DICT[prefix_name]['state'], ALL_ANNOTATIONS_DICT[suffix_name]['state'], self._device)
                 encoded_s_prime = encode(batch_s_prime, domain, tokenizer, language_model,
-                                         prefix['state']['state'], suffix['state']['state'], self._device)
+                                         ALL_ANNOTATIONS_DICT[prefix_name]['state'], ALL_ANNOTATIONS_DICT[suffix_name]['state'], self._device)
                 if data['states'] is None:
                     data['states'] = encoded_s
                 else:
@@ -234,8 +232,8 @@ class ReplayBufferProMax(ReplayBuffer):
             for i in tqdm(range(0, self._size, batch_size), desc='Processing Actions'):
                 idx_ub = min(i + batch_size, self._size)
                 batch_a = self._actions[i:idx_ub].cpu().numpy()
-                encoded_a = encode(batch_a, domain, tokenizer, language_model, prefix['action']['action'],
-                                   suffix['action']['action'], self._device)
+                encoded_a = encode(batch_a, domain, tokenizer, language_model, ALL_ANNOTATIONS_DICT[prefix_name]['action'],
+                                   ALL_ANNOTATIONS_DICT[suffix_name]['action'], self._device)
                 if data['actions'] is None:
                     data['actions'] = encoded_a
                 else:

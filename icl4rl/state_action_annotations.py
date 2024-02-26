@@ -1,5 +1,4 @@
 MUJOCO_FULL_DESCRIPTION = {
-    'nickname': 'mjc_full',
     'state': {
         'walker2d': ['z-coordinate (height) of the torso', 'angle of the torso', 'angle of the right thigh joint',
                      'angle of the right leg joint', 'angle of the right foot joint', 'angle of the left thigh joint',
@@ -29,7 +28,6 @@ MUJOCO_FULL_DESCRIPTION = {
 }
 
 MUJOCO_SHORT_DESCRIPTION = {
-    'nickname': 'mjc_short',
     'state': {
         'walker2d': ['height of body', 'angle of body', 'angle of right thigh',
                      'angle of right leg', 'angle of right foot', 'angle of left thigh',
@@ -58,7 +56,6 @@ MUJOCO_SHORT_DESCRIPTION = {
 }
 
 MUJOCO_UNIT = {
-    'nickname': 'mjc_unit',
     'state': {
         'walker2d': ['m'] + ['rad' for _ in range(7)] + ['m/s', 'm/s'] + ['rad/s' for _ in range(7)],
         'halfcheetah': ['m'] + ['rad' for _ in range(7)] + ['m/s', 'm/s'] + ['rad/s' for _ in range(7)]
@@ -70,11 +67,17 @@ MUJOCO_UNIT = {
 }
 
 NONE = {
-    'nickname': 'none',
     'state': {'walker2d': ['' for _ in range(17)],
               'halfcheetah': ['' for _ in range(17)]
               },
     'action': {'walker2d': ['' for _ in range(6)],
                'halfcheetah': ['' for _ in range(6)]
                }
+}
+
+ALL_ANNOTATIONS_DICT = {
+    'mjc_full': MUJOCO_FULL_DESCRIPTION,
+    'mjc_short': MUJOCO_SHORT_DESCRIPTION,
+    'mjc_unit': MUJOCO_UNIT,
+    'none': NONE,
 }
