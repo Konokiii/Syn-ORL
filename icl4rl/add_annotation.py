@@ -272,7 +272,7 @@ class ReplayBufferProMax(ReplayBuffer):
         # TODO: Take '_pointer' more seriously.
         self._size = use_size
         self._pointer = use_size
-        print('Retain %f of original buffer data: ', use_size)
+        print('Retain %f of original buffer data: ' % data_ratio, use_size)
 
     def sample(self, batch_size: int, sample_state_embedding: bool = False,
                sample_action_embedding: bool = False) -> TensorBatch:

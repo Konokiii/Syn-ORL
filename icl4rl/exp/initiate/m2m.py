@@ -37,11 +37,11 @@ def main():
         'target_dataset', '', ['medium'],
 
         'data_ratio', 'R', [0.01, 0.1, 1.0],
-        'prefix_name', 'PF', ['mjc_short', 'none'],
-        'suffix_name', 'SF', ['mjc_unit', 'none'],
+        'cross_training_mode', 'scr', ['ZeroShot', 'SymCoT', 'None'],
 
         'enable_language_encoding', 'enc', [True, False],
-        'cross_training_mode', 'scr', ['ZeroShot', 'SymCoT', 'None'],
+        'prefix_name', 'PF', ['mjc_short', 'none'],
+        'suffix_name', 'SF', ['mjc_unit', 'none'],
 
         'seed', 'S', [0, 1, 2]
     ]
