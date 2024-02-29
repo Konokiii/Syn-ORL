@@ -38,10 +38,10 @@ class TrainConfig:
     enc_batch_size: int = 64
     enable_language_encoding: bool = True
     pretrained_LM: str = 'sentence-transformers/all-mpnet-base-v2'
-    emb_mode = 'avg'  # Choose from 'avg', 'cls'
+    emb_mode:str = 'avg'  # Choose from 'avg', 'cls'
     prefix_name: str = 'none'
     suffix_name: str = 'none'
-    normalize_embedding = False
+    normalize_embedding: bool = False
 
     # Cross domain setup
     data_ratio: float = 1.0
@@ -218,7 +218,7 @@ def eval_actor(
             if enable_language_encoding:
                 prefix = ALL_ANNOTATIONS_DICT[prefix_name]['state']
                 suffix = ALL_ANNOTATIONS_DICT[suffix_name]['state']
-                state = encode(state, domain, tokenizer, language_model, prefix, suffix, device, emb_mode=emb_mode)
+                state = encode(state, domain, tokenizer, language_model, prefix, suffix, emb_mode, device)
                 if emb_mean is not None:
                     state = normalize_states(state, emb_mean, emb_std)
             action = actor.act(state, device)

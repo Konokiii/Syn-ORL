@@ -215,9 +215,9 @@ class ReplayBufferProMax(ReplayBuffer):
                 batch_s = self._states[i:idx_ub].cpu().numpy()
                 batch_s_prime = self._next_states[i:idx_ub].cpu().numpy()
                 encoded_s = encode(batch_s, domain, tokenizer, language_model,
-                                   ALL_ANNOTATIONS_DICT[prefix_name]['state'], ALL_ANNOTATIONS_DICT[suffix_name]['state'], self._device, emb_mode=emb_mode)
+                                   ALL_ANNOTATIONS_DICT[prefix_name]['state'], ALL_ANNOTATIONS_DICT[suffix_name]['state'], emb_mode, self._device)
                 encoded_s_prime = encode(batch_s_prime, domain, tokenizer, language_model,
-                                         ALL_ANNOTATIONS_DICT[prefix_name]['state'], ALL_ANNOTATIONS_DICT[suffix_name]['state'], self._device, emb_mode=emb_mode)
+                                         ALL_ANNOTATIONS_DICT[prefix_name]['state'], ALL_ANNOTATIONS_DICT[suffix_name]['state'], emb_mode, self._device)
                 if data['states'] is None:
                     data['states'] = encoded_s
                 else:
@@ -236,7 +236,7 @@ class ReplayBufferProMax(ReplayBuffer):
                 idx_ub = min(i + batch_size, self._size)
                 batch_a = self._actions[i:idx_ub].cpu().numpy()
                 encoded_a = encode(batch_a, domain, tokenizer, language_model, ALL_ANNOTATIONS_DICT[prefix_name]['action'],
-                                   ALL_ANNOTATIONS_DICT[suffix_name]['action'], self._device, emb_mode=emb_mode)
+                                   ALL_ANNOTATIONS_DICT[suffix_name]['action'], emb_mode, self._device)
                 if data['actions'] is None:
                     data['actions'] = encoded_a
                 else:
