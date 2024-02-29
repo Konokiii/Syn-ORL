@@ -36,12 +36,14 @@ def main():
         'source_dataset', '', ['medium-replay'],
         'target_dataset', '', ['medium-replay'],
 
-        'data_ratio', 'R', [0.01, 0.1, 1.0],
+        'enable_language_encoding', 'enc', [True, False],
+        'emb_mode', 'embM', ['avg'],
         'prefix_name', 'PF', ['mjc_short', 'none'],
         'suffix_name', 'SF', ['mjc_unit', 'none'],
+        'normalize_embedding', 'normE', [True],
 
-        'enable_language_encoding', 'enc', [True, False],
         'cross_training_mode', 'scr', ['ZeroShot', 'SymCoT', 'None'],
+        'data_ratio', 'R', [0.01, 0.1, 1.0],
 
         'seed', 'S', [0, 1, 2]
     ]
@@ -61,6 +63,18 @@ def main():
     if actual_setting['source_dataset'] != actual_setting['target_dataset']:
         print(f'Skip setup {setting}. Source and target datasets differ.')
         return
+    if not actual_setting['enable_language_encoding']:
+        if actual_setting['prefix_name'] == actual_setting['suffix_name'] == 'none':
+            pass
+        else:
+            print(f'Skip setup {setting}. Disable language encoding.')
+            return
+    if actual_setting['cross_training_mode'] == 'ZeroShot':
+        if actual_setting['data_ratio'] == 1.0:
+            pass
+        else:
+            print(f'Skip setup {setting}. ZeroShot training does not involve source data.')
+            return
 
     # exp_name_full = get_auto_exp_name(actual_setting, hyper2logname, exp_prefix='')
     # config = pyrallis.load(TrainConfig, '/configs/offline/iql/%s/%s_v2.yaml'
@@ -69,6 +83,7 @@ def main():
     """replace values"""
     config = TrainConfig(**actual_setting)
     config.device = DEVICE
+    config.eval_freq = int(1e4)
 
     config.group = '%s2%s-%s2%s' % (env2short[config.source_domain], env2short[config.target_domain],
                                     data2short[config.source_dataset], data2short[config.target_dataset])

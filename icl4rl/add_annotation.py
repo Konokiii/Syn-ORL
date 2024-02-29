@@ -35,7 +35,7 @@ def LM_mean_pooling(model_output, attention_mask):
 @torch.no_grad()
 def encode(raw_vectors: np.ndarray, domain_name: str, tokenizer, language_model,
            prefix_annotation_dict: Optional[Dict[str, list]],
-           suffix_annotation_dict: Optional[Dict[str, list]], device: str = 'cpu'):
+           suffix_annotation_dict: Optional[Dict[str, list]], emb_mode: str, device: str = 'cpu'):
     if prefix_annotation_dict.get(domain_name, None) is None:
         raise KeyError('Unsupported domain prefix annotation.')
     if suffix_annotation_dict.get(domain_name, None) is None:
@@ -46,7 +46,10 @@ def encode(raw_vectors: np.ndarray, domain_name: str, tokenizer, language_model,
     readable = add_annotation(raw_vectors, prefix_annotations, suffix_annotations)
     lm_inputs = tokenizer(readable, padding=True, truncation=True, return_tensors='pt').to(device)
     lm_outputs = language_model(**lm_inputs)
-    embeddings = LM_mean_pooling(lm_outputs, lm_inputs['attention_mask'])
+    if emb_mode == 'avg':
+        embeddings = LM_mean_pooling(lm_outputs, lm_inputs['attention_mask'])
+    elif emb_mode == 'cls':
+        embeddings = lm_outputs[0][:, 0, :]
     embeddings = F.normalize(embeddings, p=2, dim=1)
     return embeddings.cpu().numpy()
 
@@ -165,7 +168,7 @@ class ReplayBufferProMax(ReplayBuffer):
         print(f"Dataset size: {n_transitions}")
 
     def encode_raw_d4rl_data(self, domain: str, dataset: str, tokenizer, language_model, prefix_name, suffix_name, batch_size=64,
-                             encoding_only=False):
+                             encoding_only=False, emb_mode='avg'):
         # Currently do not support language encoding twice.
         if self.has_embedded:
             raise ValueError('Action Denied! ReplayBuffer has contained language embeddings.')
@@ -178,17 +181,17 @@ class ReplayBufferProMax(ReplayBuffer):
 
         # Load saved language embeddings
         folder_path = '/corl/icl4rl/language_embeddings/'
-        state_file_name = '%s_%s_%s_%s_%s_S.pkl' % (
-            domain, dataset, prefix_name, suffix_name,
+        state_file_name = '%s_%s_%s_%s_%s%s_S.pkl' % (
+            domain, dataset, prefix_name, suffix_name, '' if emb_mode == 'avg' else 'cls_',
             language_model.__class__.__name__)
-        action_file_name = '%s_%s_%s_%s_%s_A.pkl' % (
-            domain, dataset, prefix_name, suffix_name,
+        action_file_name = '%s_%s_%s_%s_%s%s_A.pkl' % (
+            domain, dataset, prefix_name, suffix_name, '' if emb_mode == 'avg' else 'cls_',
             language_model.__class__.__name__)
         state_file_path = os.path.join(folder_path, state_file_name)
         action_file_path = os.path.join(folder_path, action_file_name)
 
-        print('Attempt to encode data from %s_%s_%s_%s_%s.' % (
-            domain, dataset, prefix_name, suffix_name,
+        print('Attempt to encode data from %s_%s_%s_%s_%s%s.' % (
+            domain, dataset, prefix_name, suffix_name, '' if emb_mode == 'avg' else 'cls_',
             language_model.__class__.__name__))
 
         if os.path.exists(state_file_path):
@@ -212,9 +215,9 @@ class ReplayBufferProMax(ReplayBuffer):
                 batch_s = self._states[i:idx_ub].cpu().numpy()
                 batch_s_prime = self._next_states[i:idx_ub].cpu().numpy()
                 encoded_s = encode(batch_s, domain, tokenizer, language_model,
-                                   ALL_ANNOTATIONS_DICT[prefix_name]['state'], ALL_ANNOTATIONS_DICT[suffix_name]['state'], self._device)
+                                   ALL_ANNOTATIONS_DICT[prefix_name]['state'], ALL_ANNOTATIONS_DICT[suffix_name]['state'], self._device, emb_mode=emb_mode)
                 encoded_s_prime = encode(batch_s_prime, domain, tokenizer, language_model,
-                                         ALL_ANNOTATIONS_DICT[prefix_name]['state'], ALL_ANNOTATIONS_DICT[suffix_name]['state'], self._device)
+                                         ALL_ANNOTATIONS_DICT[prefix_name]['state'], ALL_ANNOTATIONS_DICT[suffix_name]['state'], self._device, emb_mode=emb_mode)
                 if data['states'] is None:
                     data['states'] = encoded_s
                 else:
@@ -233,7 +236,7 @@ class ReplayBufferProMax(ReplayBuffer):
                 idx_ub = min(i + batch_size, self._size)
                 batch_a = self._actions[i:idx_ub].cpu().numpy()
                 encoded_a = encode(batch_a, domain, tokenizer, language_model, ALL_ANNOTATIONS_DICT[prefix_name]['action'],
-                                   ALL_ANNOTATIONS_DICT[suffix_name]['action'], self._device)
+                                   ALL_ANNOTATIONS_DICT[suffix_name]['action'], self._device, emb_mode=emb_mode)
                 if data['actions'] is None:
                     data['actions'] = encoded_a
                 else:
