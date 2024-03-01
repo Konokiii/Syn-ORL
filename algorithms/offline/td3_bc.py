@@ -223,7 +223,7 @@ def eval_actor(
                 suffix = ALL_ANNOTATIONS_DICT[suffix_name]['state']
                 state = encode(state, domain, tokenizer, language_model, prefix, suffix, emb_mode, device)
                 if emb_mean is not None:
-                    state = normalize_states(state, emb_mean, emb_std)
+                    state = normalize_states(state, emb_mean.cpu().numpy(), emb_std.cpu().numpy())
             action = actor.act(state, device)
             state, reward, done, _ = env.step(action)
             episode_reward += reward
@@ -623,8 +623,8 @@ def run_TD3_BC(config: TrainConfig):
                 language_model=language_model,
                 prefix_name=config.prefix_name,
                 suffix_name=config.suffix_name,
-                emb_mean=emb_mean.cpu().numpy(),
-                emb_std=emb_std.cpu().numpy(),
+                emb_mean=emb_mean,
+                emb_std=emb_std,
                 emb_mode=config.emb_mode
             )
             eval_score = eval_scores.mean()

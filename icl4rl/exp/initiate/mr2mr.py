@@ -40,7 +40,7 @@ def main():
         'emb_mode', 'embM', ['avg'],
         'prefix_name', 'PF', ['mjc_short', 'none'],
         'suffix_name', 'SF', ['mjc_unit', 'none'],
-        'normalize_embedding', 'normE', [True, False],
+        'normalize_embedding', 'normE', [False],
 
         'cross_training_mode', 'scr', ['ZeroShot', 'SymCoT', 'None'],
         'data_ratio', 'R', [0.01, 0.1, 1.0],
