@@ -7,6 +7,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from collections import OrderedDict
 
 import d4rl
 import gym
@@ -47,6 +48,8 @@ class TrainConfig:
     data_ratio: float = 1.0
     cross_training_mode: str = 'ZeroShot'  # Choose from 'ZeroShot', 'SymCoT', 'None'
 
+    # Model arch
+    hidden_arch: str = '256-256'  # For example, this means two hidden layer of size 256
 
     # Experiment
     device: str = "cuda"
@@ -255,17 +258,27 @@ def modify_reward(dataset, env_name, max_episode_steps=1000):
 
 
 class Actor(nn.Module):
-    def __init__(self, state_dim: int, action_dim: int, max_action: float):
+    def __init__(self, state_dim: int, action_dim: int, max_action: float, arch: str = '256-256'):
         super(Actor, self).__init__()
+        in_dim = state_dim
+        module_list = []
+        for i, hidden_size in enumerate(arch.split('-')):
+            hidden_size = int(hidden_size)
+            module_list.append(nn.Linear(in_dim, hidden_size))
+            module_list.append(nn.ReLU())
+            in_dim = hidden_size
+        module_list.append(nn.Linear(in_dim, action_dim))
+        module_list.append(nn.Tanh())
+        self.net = nn.Sequential(*module_list)
 
-        self.net = nn.Sequential(
-            nn.Linear(state_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, action_dim),
-            nn.Tanh(),
-        )
+        # self.net = nn.Sequential(
+        #     nn.Linear(state_dim, 256),
+        #     nn.ReLU(),
+        #     nn.Linear(256, 256),
+        #     nn.ReLU(),
+        #     nn.Linear(256, action_dim),
+        #     nn.Tanh(),
+        # )
 
         self.max_action = max_action
 
@@ -279,16 +292,26 @@ class Actor(nn.Module):
 
 
 class Critic(nn.Module):
-    def __init__(self, state_dim: int, action_dim: int):
+    def __init__(self, state_dim: int, action_dim: int, arch: str = '256-256'):
         super(Critic, self).__init__()
 
-        self.net = nn.Sequential(
-            nn.Linear(state_dim + action_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1),
-        )
+        in_dim = state_dim + action_dim
+        module_list = []
+        for i, hidden_size in enumerate(arch.split('-')):
+            hidden_size = int(hidden_size)
+            module_list.append(nn.Linear(in_dim, hidden_size))
+            module_list.append(nn.ReLU())
+            in_dim = hidden_size
+        module_list.append(nn.Linear(in_dim, 1))
+        self.net = nn.Sequential(*module_list)
+
+        # self.net = nn.Sequential(
+        #     nn.Linear(state_dim + action_dim, 256),
+        #     nn.ReLU(),
+        #     nn.Linear(256, 256),
+        #     nn.ReLU(),
+        #     nn.Linear(256, 1),
+        # )
 
     def forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         sa = torch.cat([state, action], 1)
@@ -504,6 +527,7 @@ def run_TD3_BC(config: TrainConfig):
     emb_mean, emb_std = None, None
     if config.normalize_embedding:
         normalize_embedding(source_buffer)
+        # TODO: They are tensor...
         emb_mean, emb_std = normalize_embedding(target_buffer)
 
     target_buffer.retain_data_ratio(data_ratio=config.data_ratio)
@@ -520,13 +544,14 @@ def run_TD3_BC(config: TrainConfig):
 
     # TODO: Modify the action dimension and max action when having decoder.
     input_state_dim = language_embedding_dim if config.enable_language_encoding else target_state_dim
+    hidden_arch = config.hidden_arch
 
-    actor = Actor(input_state_dim, target_action_dim, target_max_action).to(config.device)
+    actor = Actor(input_state_dim, target_action_dim, target_max_action, arch=hidden_arch).to(config.device)
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=3e-4)
 
-    critic_1 = Critic(input_state_dim, target_action_dim).to(config.device)
+    critic_1 = Critic(input_state_dim, target_action_dim, arch=hidden_arch).to(config.device)
     critic_1_optimizer = torch.optim.Adam(critic_1.parameters(), lr=3e-4)
-    critic_2 = Critic(input_state_dim, target_action_dim).to(config.device)
+    critic_2 = Critic(input_state_dim, target_action_dim, arch=hidden_arch).to(config.device)
     critic_2_optimizer = torch.optim.Adam(critic_2.parameters(), lr=3e-4)
 
     # TODO: kwargs also contains max_action.
@@ -598,8 +623,8 @@ def run_TD3_BC(config: TrainConfig):
                 language_model=language_model,
                 prefix_name=config.prefix_name,
                 suffix_name=config.suffix_name,
-                emb_mean=emb_mean,
-                emb_std=emb_std,
+                emb_mean=emb_mean.cpu().numpy(),
+                emb_std=emb_std.cpu().numpy(),
                 emb_mode=config.emb_mode
             )
             eval_score = eval_scores.mean()

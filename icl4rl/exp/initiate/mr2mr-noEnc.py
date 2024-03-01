@@ -36,11 +36,11 @@ def main():
         'source_dataset', '', ['medium-replay'],
         'target_dataset', '', ['medium-replay'],
 
-        'enable_language_encoding', 'enc', [True],
-        'emb_mode', 'embM', ['avg'],
-        'prefix_name', 'PF', ['mjc_short', 'none'],
-        'suffix_name', 'SF', ['mjc_unit', 'none'],
-        'normalize_embedding', 'normE', [True, False],
+        'enable_language_encoding', 'enc', [False],
+        # 'emb_mode', 'embM', ['avg'],
+        # 'prefix_name', 'PF', ['mjc_short', 'none'],
+        # 'suffix_name', 'SF', ['mjc_unit', 'none'],
+        # 'normalize_embedding', 'normE', [True, False],
 
         'cross_training_mode', 'scr', ['ZeroShot', 'SymCoT', 'None'],
         'data_ratio', 'R', [0.01, 0.1, 1.0],
@@ -64,12 +64,12 @@ def main():
     if actual_setting['source_dataset'] != actual_setting['target_dataset']:
         print(f'Skip setup {setting}. Source and target datasets differ.')
         return
-    if not actual_setting['enable_language_encoding']:
-        if actual_setting['prefix_name'] == actual_setting['suffix_name'] == 'none':
-            pass
-        else:
-            print(f'Skip setup {setting}. Disable language encoding.')
-            return
+    # if not actual_setting['enable_language_encoding']:
+    #     if actual_setting['prefix_name'] == actual_setting['suffix_name'] == 'none':
+    #         pass
+    #     else:
+    #         print(f'Skip setup {setting}. Disable language encoding.')
+    #         return
     if actual_setting['cross_training_mode'] == 'ZeroShot':
         if actual_setting['data_ratio'] == 1.0:
             pass
