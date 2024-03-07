@@ -36,8 +36,8 @@ def main():
         'source_dataset', '', ['medium'],
         'target_dataset', '', ['medium'],
 
-        'enable_language_encoding', 'enc', [True, False],
-        'emb_mode', 'embM', ['avg'],
+        'enable_language_encoding', 'enc', [True],
+        'emb_mode', 'embM', ['cls'],
         'prefix_name', 'PF', ['mjc_short', 'none'],
         'suffix_name', 'SF', ['mjc_unit', 'none'],
         'normalize_embedding', 'normE', [True, False],
@@ -45,7 +45,7 @@ def main():
         'cross_training_mode', 'scr', ['ZeroShot', 'SymCoT', 'None'],
         'data_ratio', 'R', [0.01, 0.1, 1.0],
 
-        'hidden_arch', 'arch', ['512-256'],
+        # 'hidden_arch', 'arch', ['256-256'],
         'seed', 'S', [0, 1, 2]
     ]
 
