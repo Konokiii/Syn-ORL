@@ -11,7 +11,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"  # To suppress the warning about 
 import torch
 from dataclasses import replace
 import pyrallis
-from algorithms.offline.td3_bc import TrainConfig, run_TD3_BC
+from algorithms.offline.td3_bc_copy import TrainConfig, run_TD3_BC
 import argparse
 from icl4rl.state_action_annotations import *
 from algorithms.offline.utils import *
@@ -31,12 +31,12 @@ def main():
 
     settings = [
         'encoding_only', '', [True],
-        'enc_batch_size', '', [1200],
-        'source_domain', '', ['halfcheetah', 'walker2d'],
-        'source_dataset', '', ['medium-expert', 'medium', 'medium-replay'],
-        'prefix_name', '', ['mjc_short', 'none'],
-        'suffix_name', '', ['mjc_unit', 'none'],
-        'emb_mode', '', ['cls']
+        'enc_batch_size', '', [1400],
+        'source_domain', '', ['halfcheetah', 'walker2d', 'hopper'],
+        'source_dataset', '', ['medium-replay', 'medium', 'medium-expert'],
+        'prefix_name', '', ['mjc_re'],
+        'suffix_name', '', ['mjc_unit'],
+        'emb_mode', '', ['avg']
     ]
 
     # settings = [

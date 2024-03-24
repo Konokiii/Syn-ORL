@@ -21,7 +21,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModel
 
 from icl4rl.state_action_annotations import *
-from icl4rl.add_annotation import *
+from icl4rl.add_annotation_copy import *
 
 TensorBatch = List[torch.Tensor]
 
@@ -39,7 +39,7 @@ class TrainConfig:
     enc_batch_size: int = 64
     enable_language_encoding: bool = True
     pretrained_LM: str = 'sentence-transformers/all-mpnet-base-v2'
-    emb_mode:str = 'avg'  # Choose from 'avg', 'cls'
+    emb_mode: str = 'avg'  # Choose from 'avg', 'cls'
     prefix_name: str = 'none'
     suffix_name: str = 'none'
     normalize_embedding: bool = False
@@ -459,6 +459,7 @@ def preprocess_states_and_actions(dataset, env_name: str, env, normalize_reward:
     )
     return wrap_env(env, state_mean=state_mean, state_std=state_std)
 
+
 # TODO: Should input nparray
 def normalize_embedding(buffer: ReplayBufferProMax):
     state_mean, state_std = compute_mean_std(buffer._state_embeddings, eps=1e-3)
@@ -471,40 +472,76 @@ def normalize_embedding(buffer: ReplayBufferProMax):
     return state_mean, state_std
 
 
+class Domain:
+    def __init__(self,
+                 domain_name: str,
+                 data_type: str,
+                 ):
+        self.domain_name = domain_name
+        self.data_type = data_type
+        self.env_name = '%s-%s-v2' % (domain_name, data_type)
+        self.env = gym.make(self.env_name)
+        self.state_dim = self.env.observation_space.shape[0]
+        self.action_dim = self.env.action_space.shape[0]
+        self.max_action = float(self.env.action_space.high[0])
+
+        self.raw_dataset = None
+        self.emb_dataset = None
+
+    def load_d4rl_qlearning_dataset_with_ratio(self, data_ratio=1.0, seed=0):
+        raw_dataset = d4rl.qlearning_dataset(self.env)
+        n_transitions = raw_dataset['observations'].shape[0]
+        if data_ratio != 1.0:
+            np.random.seed(seed)
+            sample_idx = np.random.randint(n_transitions, size=n_transitions*data_ratio)
+    def reset_env_state_stats(self, state_mean, state_std):
+        self.env = wrap_env(self.env, state_mean=state_mean, state_std=state_std)
+
+
 # @pyrallis.wrap()
 def run_TD3_BC(config: TrainConfig):
     # TODO: Write the following two blocks into the same class object. Note eval_actor and encode functions.
-    source_env_name = '%s-%s-v2' % (config.source_domain, config.source_dataset)
-    source_env = gym.make(source_env_name)
-    source_state_dim = source_env.observation_space.shape[0]
-    source_action_dim = source_env.action_space.shape[0]
-    source_raw_dataset = d4rl.qlearning_dataset(source_env)
+    # TODO: Need a proper place to normalize the state and action and the environment and test environment!!!
+    source_domain = Domain(config.source_domain, config.source_dataset) if config.cross_training_mode != 'None' else None
+    target_domain = Domain(config.target_domain, config.target_dataset)
+
+    domain_list = [target_domain]
+    if source_domain is not None:
+        domain_list.append(source_domain)
+
+    # Load d4rl data and language encoding
+    for domain in domain_list:
+
+
+    data ratio
+    language_enc
+
+
+
+
+
+
     # source_env = preprocess_states_and_actions(source_raw_dataset, source_env_name, source_env, config.normalize_reward,
     #                                            config.normalize)
-    source_buffer = ReplayBufferProMax(
-        source_state_dim,
-        source_action_dim,
-        config.buffer_size,
-        config.device,
-    )
-    source_buffer.load_d4rl_dataset(source_raw_dataset)
-    source_max_action = float(source_env.action_space.high[0])
-
-    target_env_name = '%s-%s-v2' % (config.target_domain, config.target_dataset)
-    target_env = gym.make(target_env_name)
-    target_state_dim = target_env.observation_space.shape[0]
-    target_action_dim = target_env.action_space.shape[0]
-    target_raw_dataset = d4rl.qlearning_dataset(target_env)
+    # source_buffer = ReplayBufferProMax(
+    #     source_state_dim,
+    #     source_action_dim,
+    #     config.buffer_size,
+    #     config.device,
+    # )
+    # source_buffer.load_d4rl_dataset(source_raw_dataset)
+    #
+    #
+    # target_raw_dataset = d4rl.qlearning_dataset(target_env)
     # target_env = preprocess_states_and_actions(target_raw_dataset, target_env_name, target_env, config.normalize_reward,
     #                                            config.normalize)
-    target_buffer = ReplayBufferProMax(
-        target_state_dim,
-        target_action_dim,
-        config.buffer_size,
-        config.device,
-    )
-    target_buffer.load_d4rl_dataset(target_raw_dataset)
-    target_max_action = float(target_env.action_space.high[0])
+    # target_buffer = ReplayBufferProMax(
+    #     target_state_dim,
+    #     target_action_dim,
+    #     config.buffer_size,
+    #     config.device,
+    # )
+    # target_buffer.load_d4rl_dataset(target_raw_dataset)
 
     tokenizer = AutoTokenizer.from_pretrained(config.pretrained_LM)
     language_model = AutoModel.from_pretrained(config.pretrained_LM).to(config.device)
@@ -512,18 +549,20 @@ def run_TD3_BC(config: TrainConfig):
     language_embedding_dim = language_model.config.hidden_size
     # TODO: (1)Find ways to support different annotations for state and action;
     #       (2)Find ways to support different annoations for source and target domain
-    if config.max_timesteps < 100: # This is only for debug
+    if config.max_timesteps < 100:  # This is only for debug
         source_buffer.retain_data_ratio(data_ratio=512 / source_buffer._size)
         target_buffer.retain_data_ratio(data_ratio=512 / target_buffer._size)
 
     source_buffer.encode_raw_d4rl_data(config.source_domain, config.source_dataset, tokenizer, language_model,
-                                       config.prefix_name, config.suffix_name, batch_size=config.enc_batch_size, encoding_only=config.encoding_only, emb_mode=config.emb_mode)
+                                       config.prefix_name, config.suffix_name, batch_size=config.enc_batch_size,
+                                       encoding_only=config.encoding_only, emb_mode=config.emb_mode)
     # TODO: Improve encoding_only case.
     if config.encoding_only:
         return
 
     target_buffer.encode_raw_d4rl_data(config.target_domain, config.target_dataset, tokenizer, language_model,
-                                       config.prefix_name, config.suffix_name, batch_size=config.enc_batch_size, emb_mode=config.emb_mode)
+                                       config.prefix_name, config.suffix_name, batch_size=config.enc_batch_size,
+                                       emb_mode=config.emb_mode)
 
     emb_mean, emb_std = None, None
     if config.normalize_embedding:
@@ -597,8 +636,10 @@ def run_TD3_BC(config: TrainConfig):
         batch = []
 
         if config.cross_training_mode == 'SymCoT':
-            source_batch = source_buffer.sample(config.batch_size // 2, sample_state_embedding=config.enable_language_encoding)
-            target_batch = target_buffer.sample(config.batch_size // 2, sample_state_embedding=config.enable_language_encoding)
+            source_batch = source_buffer.sample(config.batch_size // 2,
+                                                sample_state_embedding=config.enable_language_encoding)
+            target_batch = target_buffer.sample(config.batch_size // 2,
+                                                sample_state_embedding=config.enable_language_encoding)
             batch = [torch.cat(i, dim=0) for i in zip(source_batch, target_batch)]
         elif config.cross_training_mode == 'RandomCoT':
             pass

@@ -227,10 +227,6 @@ class ReplayBufferProMax(ReplayBuffer):
                 else:
                     data['next_states'] = np.concatenate((data['next_states'], encoded_s_prime), axis=0)
 
-            if prefix_name == 'mjc_re':
-                data['states'] = np.concatenate((data['states'], self._states[self._size, :]), axis=1)
-                data['next_states'] = np.concatenate((data['next_states'], self._next_states[self._size, :]), axis=1)
-
             with open(state_file_path, 'wb') as file:
                 pickle.dump((data['states'], data['next_states']), file)
                 print('State encoding successful. Save to: ', state_file_name)
@@ -245,9 +241,6 @@ class ReplayBufferProMax(ReplayBuffer):
                     data['actions'] = encoded_a
                 else:
                     data['actions'] = np.concatenate((data['actions'], encoded_a), axis=0)
-
-            if prefix_name == 'mjc_re':
-                data['actions'] = np.concatenate((data['actions'], self._actions[self._size, :]), axis=1)
 
             with open(action_file_path, 'wb') as file:
                 pickle.dump(data['actions'], file)
