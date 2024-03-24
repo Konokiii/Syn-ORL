@@ -222,7 +222,7 @@ def eval_actor(
                 prefix = ALL_ANNOTATIONS_DICT[prefix_name]['state']
                 suffix = ALL_ANNOTATIONS_DICT[suffix_name]['state']
                 encoded_state = encode(state, domain, tokenizer, language_model, prefix, suffix, emb_mode, device)
-                state = np.concatenate((encoded_state, state), axis=1) if prefix_name == 'mjc_re' else encoded_state
+                state = np.concatenate((encoded_state, state.unsqueeze(0)), axis=1) if prefix_name == 'mjc_re' else encoded_state
                 if emb_mean is not None:
                     state = normalize_states(state, emb_mean.cpu().numpy(), emb_std.cpu().numpy())
             action = actor.act(state, device)
@@ -504,6 +504,7 @@ def run_TD3_BC(config: TrainConfig):
     del target_raw_dataset
     target_max_action = float(target_env.action_space.high[0])
 
+    tokenizer, language_model = None, None
     if config.enable_language_encoding:
         tokenizer = AutoTokenizer.from_pretrained(config.pretrained_LM)
         language_model = AutoModel.from_pretrained(config.pretrained_LM).to(config.device)
@@ -513,9 +514,9 @@ def run_TD3_BC(config: TrainConfig):
         target_buffer.encode_raw_d4rl_data(config.target_domain, config.target_dataset, tokenizer, language_model,
                                            config.prefix_name, config.suffix_name, batch_size=config.enc_batch_size, encoding_only=config.encoding_only, emb_mode=config.emb_mode)
         if config.prefix_name == 'mjc_re':
-            target_buffer._state_embeddings = torch.cat((target_buffer._state_embeddings, target_buffer._states[:target_buffer._size]))
+            target_buffer._state_embeddings = torch.cat((target_buffer._state_embeddings, target_buffer._states[:target_buffer._size]), dim=1)
             target_buffer._next_state_embeddings = torch.cat(
-                (target_buffer._next_state_embeddings, target_buffer._next_states[:target_buffer._size]))
+                (target_buffer._next_state_embeddings, target_buffer._next_states[:target_buffer._size]), dim=1)
 
     # TODO: Improve encoding_only case.
     if config.encoding_only:
@@ -541,9 +542,9 @@ def run_TD3_BC(config: TrainConfig):
                                                config.prefix_name, config.suffix_name, batch_size=config.enc_batch_size, encoding_only=config.encoding_only, emb_mode=config.emb_mode)
             if config.prefix_name == 'mjc_re':
                 source_buffer._state_embeddings = torch.cat(
-                    (source_buffer._state_embeddings, source_buffer._states[:source_buffer._size]))
+                    (source_buffer._state_embeddings, source_buffer._states[:source_buffer._size]), dim=1)
                 source_buffer._next_state_embeddings = torch.cat(
-                    (source_buffer._next_state_embeddings, source_buffer._next_states[:source_buffer._size]))
+                    (source_buffer._next_state_embeddings, source_buffer._next_states[:source_buffer._size]), dim=1)
 
     target_buffer.retain_data_ratio(data_ratio=config.data_ratio)
 
