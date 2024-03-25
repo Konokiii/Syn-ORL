@@ -222,7 +222,7 @@ def eval_actor(
                 prefix = ALL_ANNOTATIONS_DICT[prefix_name]['state']
                 suffix = ALL_ANNOTATIONS_DICT[suffix_name]['state']
                 encoded_state = encode(state, domain, tokenizer, language_model, prefix, suffix, emb_mode, device)
-                state = np.concatenate((encoded_state, state.unsqueeze(0)), axis=1) if prefix_name == 'mjc_re' else encoded_state
+                state = np.concatenate((encoded_state, state[None, ...]), axis=1) if prefix_name == 'mjc_re' else encoded_state
                 if emb_mean is not None:
                     state = normalize_states(state, emb_mean.cpu().numpy(), emb_std.cpu().numpy())
             action = actor.act(state, device)
@@ -472,7 +472,7 @@ def preprocess_states_and_actions(buffer, env_name: str, env, normalize_reward: 
     buffer._next_states = normalize_states(
         buffer._next_states, state_mean, state_std
     )
-    return wrap_env(env, state_mean=state_mean, state_std=state_std)
+    return wrap_env(env, state_mean=state_mean.cpu().numpy(), state_std=state_std.cpu().numpy())
 
 # TODO: Should input nparray
 def normalize_embedding(buffer: ReplayBufferProMax):

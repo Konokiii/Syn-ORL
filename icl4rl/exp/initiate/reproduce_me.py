@@ -34,13 +34,13 @@ def main():
         'target_domain', '', ['hopper', 'walker2d', 'halfcheetah'],
 
         # 'source_dataset', '', ['medium'],
-        'target_dataset', '', ['medium-replay', 'medium'],
+        'target_dataset', '', ['medium-expert'],
 
-        'enable_language_encoding', 'enc', [True],
+        'enable_language_encoding', 'enc', [True, False],
         'emb_mode', 'embM', ['avg'],
         'prefix_name', 'PF', ['mjc_re'],
         'suffix_name', 'SF', ['mjc_unit'],
-        'normalize_embedding', 'normE', [False],
+        'normalize_embedding', 'normE', [True, False],
 
         'cross_training_mode', 'scr', ['None'],
         'data_ratio', 'R', [0.01, 0.1, 1.0],
@@ -58,6 +58,8 @@ def main():
 
     indexes, actual_setting, total, hyper2logname = get_setting_dt(settings, setting)
     # Terminate undesirable setups
+    if actual_setting['enable_language_encoding'] == False and actual_setting['normalize_embedding'] == False:
+        return
     # if actual_setting['source_domain'] == actual_setting['target_domain']:
     #     print(f'Skip setup {setting}. Source and target domains are the same.')
     #     return
@@ -88,7 +90,7 @@ def main():
     config.n_episodes = 5
 
     config.group = 'reproduce'
-    config.name = '_'.join([v+str(actual_setting[k]) for k,v in hyper2logname.items() if v != ''])
+    config.name = '_'.join([v + str(actual_setting[k]) for k, v in hyper2logname.items() if v != ''])
 
     run_TD3_BC(config)
 
