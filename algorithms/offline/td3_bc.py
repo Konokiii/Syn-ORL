@@ -576,14 +576,20 @@ def run_TD3_BC(config: TrainConfig):
     input_state_dim = language_embedding_dim if config.enable_language_encoding else target_state_dim
     if config.enable_language_encoding and config.prefix_name == 'mjc_re':
         input_state_dim = input_state_dim + target_state_dim
-    hidden_arch = config.hidden_arch
 
-    actor = Actor(input_state_dim, target_action_dim, target_max_action, arch=hidden_arch).to(config.device)
+    actor_arch = critic_arch = '256-256'
+    hidden_arch = config.hidden_arch
+    if '|' in hidden_arch:
+        actor_arch, critic_arch = hidden_arch.split('|')
+    else:
+        actor_arch = critic_arch = hidden_arch
+
+    actor = Actor(input_state_dim, target_action_dim, target_max_action, arch=actor_arch).to(config.device)
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=3e-4)
 
-    critic_1 = Critic(input_state_dim, target_action_dim, arch=hidden_arch).to(config.device)
+    critic_1 = Critic(input_state_dim, target_action_dim, arch=critic_arch).to(config.device)
     critic_1_optimizer = torch.optim.Adam(critic_1.parameters(), lr=3e-4)
-    critic_2 = Critic(input_state_dim, target_action_dim, arch=hidden_arch).to(config.device)
+    critic_2 = Critic(input_state_dim, target_action_dim, arch=critic_arch).to(config.device)
     critic_2_optimizer = torch.optim.Adam(critic_2.parameters(), lr=3e-4)
 
     # TODO: kwargs also contains max_action.
