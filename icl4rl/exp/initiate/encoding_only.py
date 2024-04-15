@@ -11,7 +11,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"  # To suppress the warning about 
 import torch
 from dataclasses import replace
 import pyrallis
-from algorithms.offline.td3_bc import TrainConfig, run_TD3_BC
+from algorithms.offline.td3_bc_old import TrainConfig, run_TD3_BC
 import argparse
 from icl4rl.state_action_annotations import *
 from algorithms.offline.utils import *

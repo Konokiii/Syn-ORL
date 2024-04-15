@@ -35,18 +35,20 @@ class TrainConfig:
     target_dataset: str = 'medium-replay'
 
     # Language embedding
-    encoding_only: bool = False
+    enc_only: bool = False
     enc_batch_size: int = 64
-    enable_language_encoding: bool = True
+    enable_emb: bool = False
     pretrained_LM: str = 'sentence-transformers/all-mpnet-base-v2'
     emb_mode: str = 'avg'  # Choose from 'avg', 'cls'
-    prefix_name: str = 'none'
-    suffix_name: str = 'none'
-    normalize_embedding: bool = False
+    prefix: str = 'mjc_re'
+    suffix: str = 'mjc_unit'
+    normalize_emb: bool = False
+    add_concat: bool = False
+    emb_save_folder: str = '/corl/icl4rl/language_embeddings/'
 
     # Cross domain setup
     data_ratio: float = 1.0
-    cross_training_mode: str = 'ZeroShot'  # Choose from 'ZeroShot', 'SymCoT', 'None'
+    cross_train_mode: str = 'None'  # Choose from 'ZeroShot', 'SymCoT', 'None'
 
     # Model arch
     hidden_arch: str = '256-256'  # For example, this means two hidden layer of size 256
@@ -208,8 +210,8 @@ def wandb_init(config: dict) -> None:
 
 @torch.no_grad()
 def eval_actor(
-        env: gym.Env, actor: nn.Module, device: str, n_episodes: int, seed: int, enable_language_encoding: bool,
-        domain: str, tokenizer, language_model, prefix_name, suffix_name, emb_mean, emb_std, emb_mode
+        env: gym.Env, actor: nn.Module, device: str, n_episodes: int, seed: int,
+        config, tokenizer, language_model, raw_mean, raw_std, emb_mean, emb_std
 ) -> np.ndarray:
     env.seed(seed)
     actor.eval()
@@ -218,13 +220,18 @@ def eval_actor(
         state, done = env.reset(), False
         episode_reward = 0.0
         while not done:
-            if enable_language_encoding:
-                prefix = ALL_ANNOTATIONS_DICT[prefix_name]['state']
-                suffix = ALL_ANNOTATIONS_DICT[suffix_name]['state']
-                encoded_state = encode(state, domain, tokenizer, language_model, prefix, suffix, emb_mode, device)
-                state = np.concatenate((encoded_state, state[None, ...]), axis=1) if prefix_name == 'mjc_re' else encoded_state
-                if emb_mean is not None:
-                    state = normalize_states(state, emb_mean.cpu().numpy(), emb_std.cpu().numpy())
+            if config.enable_emb:
+                prefix = ALL_ANNOTATIONS_DICT[config.prefix]['state']
+                suffix = ALL_ANNOTATIONS_DICT[config.suffix]['state']
+                state_emb = encode_fn(state, config.target_domain, tokenizer, language_model, prefix, suffix, device=device)
+                state_emb = normalize_states(state_emb, emb_mean, emb_std)
+                if config.add_concat:
+                    state = normalize_states(state, raw_mean, raw_std)
+                    state = np.concatenate((state_emb, state[None, ...]), axis=1)
+                else:
+                    state = state_emb
+            else:
+                state = normalize_states(state, raw_mean, raw_std)
             action = actor.act(state, device)
             state, reward, done, _ = env.step(action)
             episode_reward += reward
@@ -443,124 +450,176 @@ class TD3_BC:
         self.total_it = state_dict["total_it"]
 
 
-# def preprocess_states_and_actions(dataset, env_name: str, env, normalize_reward: bool = False, normalize: bool = True):
-#     if normalize_reward:
-#         modify_reward(dataset, env_name)
-#
-#     if normalize:
-#         state_mean, state_std = compute_mean_std(dataset["observations"], eps=1e-3)
-#     else:
-#         state_mean, state_std = 0, 1
-#
-#     dataset["observations"] = normalize_states(
-#         dataset["observations"], state_mean, state_std
-#     )
-#     dataset["next_observations"] = normalize_states(
-#         dataset["next_observations"], state_mean, state_std
-#     )
-#     return wrap_env(env, state_mean=state_mean, state_std=state_std)
+def preprocess_states_and_actions(dataset, env_name: str, env, normalize_reward: bool = False, normalize: bool = True):
+    if normalize_reward:
+        modify_reward(dataset, env_name)
 
-def preprocess_states_and_actions(buffer, env_name: str, env, normalize_reward: bool = False, normalize: bool = True):
     if normalize:
-        state_mean, state_std = compute_mean_std(buffer._states, eps=1e-3)
+        state_mean, state_std = compute_mean_std(dataset["observations"], eps=1e-3)
     else:
         state_mean, state_std = 0, 1
 
-    buffer._states = normalize_states(
-        buffer._states, state_mean, state_std
+    dataset["observations"] = normalize_states(
+        dataset["observations"], state_mean, state_std
     )
-    buffer._next_states = normalize_states(
-        buffer._next_states, state_mean, state_std
+    dataset["next_observations"] = normalize_states(
+        dataset["next_observations"], state_mean, state_std
     )
-    return wrap_env(env, state_mean=state_mean.cpu().numpy(), state_std=state_std.cpu().numpy())
+    return wrap_env(env, state_mean=state_mean, state_std=state_std)
 
-# TODO: Should input nparray
-def normalize_embedding(buffer: ReplayBufferProMax):
-    state_mean, state_std = compute_mean_std(buffer._state_embeddings, eps=1e-3)
-    buffer._state_embeddings = normalize_states(
-        buffer._state_embeddings, state_mean, state_std
-    )
-    buffer._next_state_embeddings = normalize_states(
-        buffer._next_state_embeddings, state_mean, state_std
-    )
-    return state_mean, state_std
+
+class Domain:
+    def __init__(self,
+                 domain_name: str,
+                 data_type: str,
+                 is_target: bool
+                 ):
+
+        self.is_target = is_target
+        self.domain_name = domain_name
+        self.data_type = data_type
+        self.env_name = '%s-%s-v2' % (domain_name, data_type)
+        self.env = gym.make(self.env_name)
+        self.state_dim = self.env.observation_space.shape[0]
+        self.action_dim = self.env.action_space.shape[0]
+        self.max_action = float(self.env.action_space.high[0])
+
+        self.sample_idx = None
+        self.raw_dataset = None
+        self.emb_dataset = None
+
+    def normalize_states(self, raw_or_emb: str = 'raw'):
+        dataset = self.raw_dataset if raw_or_emb == 'raw' else self.emb_dataset
+        state_mean, state_std = compute_mean_std(dataset["observations"], eps=1e-3)
+        dataset["observations"] = normalize_states(
+            dataset["observations"], state_mean, state_std
+        )
+        dataset["next_observations"] = normalize_states(
+            dataset["next_observations"], state_mean, state_std
+        )
+        return state_mean, state_std
+
+    def reset_env_with_state_stats(self, state_mean, state_std):
+        self.env = wrap_env(self.env, state_mean=state_mean, state_std=state_std)
+
+    def load_d4rl_dataset_with_ratio(self, data_ratio=1.0, seed=0):
+        raw_dataset = d4rl.qlearning_dataset(self.env)
+        n_transitions = raw_dataset['observations'].shape[0]
+        sample_idx = np.arange(n_transitions)
+        if data_ratio != 1.0:
+            np.random.seed(seed)
+            sample_idx = np.random.choice(n_transitions, size=int(n_transitions * data_ratio), replace=False)
+        for k in raw_dataset.keys():
+            raw_dataset[k] = raw_dataset[k][sample_idx]
+
+        self.sample_idx = sample_idx
+        self.raw_dataset = raw_dataset
+        print(f'Successfully load d4rl raw dataset {self.env_name} with data ratio {data_ratio}.')
+
+    def load_embeddings(self, config, tokenizer, language_model, load_sa='SA'):
+        # Generate file name with corresponding config:
+        file_name = '%s_%s_%s_%s_%s.pkl' % (
+            self.domain_name, self.data_type,
+            config.prefix, config.suffix,
+            language_model.__class__.__name__
+        )
+
+        file_path = os.path.join(config.emb_save_folder, file_name)
+        print(f"-----Attempt to load {load_sa} embeddings from {file_path}.")
+
+        if os.path.exists(file_path):
+            print('Embeddings file exists :) . Directly load from there!')
+            with open(file_path, 'rb') as file:
+                emb_dict = pickle.load(file)
+        else:
+            print("Embeddings file does not exist :( . Start encoding instead.")
+            emb_dict = self.encode_raw_data(config, tokenizer, language_model)
+            print('Successfully encode raw data.')
+            if config.enc_only:
+                with open(file_path, 'wb') as file:
+                    pickle.dump(emb_dict, file)
+                    print('Save embeddings to: ', file_path)
+
+        if not config.enc_only:
+            #  For memory efficiency, drop unnecessary data:
+            if 'S' not in load_sa:
+                del emb_dict['observations']
+                del emb_dict['next_observations']
+            if 'A' not in load_sa:
+                del emb_dict['actions']
+
+            # Select embeddings with corresponding data ratio
+            for k in emb_dict.keys():
+                emb_dict[k] = emb_dict[k][self.sample_idx]
+            self.emb_dataset = emb_dict
+
+    def encode_raw_data(self, config, tokenizer, language_model):
+        raw_data_dict = self.raw_dataset
+        emb_dict = {}
+        for d in ['observations', 'next_observations', 'actions']:
+            raw_data = raw_data_dict[d]
+            data_size = raw_data.shape[0]
+            batch_size = config.enc_batch_size
+            sa = 'action' if d == 'actions' else 'state'
+            for i in tqdm(range(0, data_size, batch_size), desc=f'Processing {d}'):
+                batch = raw_data[i:i + batch_size]
+                embeddings = encode_fn(
+                    batch, self.domain_name, tokenizer, language_model,
+                    ALL_ANNOTATIONS_DICT[config.prefix][sa],
+                    ALL_ANNOTATIONS_DICT[config.suffix][sa],
+                    device=config.device
+                )
+                if emb_dict.get(d) is None:
+                    emb_dict[d] = embeddings
+                else:
+                    emb_dict[d] = np.concatenate((emb_dict[d], embeddings), axis=0)
+
+        return emb_dict
 
 
 # @pyrallis.wrap()
 def run_TD3_BC(config: TrainConfig):
     # TODO: Write the following two blocks into the same class object. Note eval_actor and encode functions.
-    target_env_name = '%s-%s-v2' % (config.target_domain, config.target_dataset)
-    target_env = gym.make(target_env_name)
-    target_state_dim = target_env.observation_space.shape[0]
-    target_action_dim = target_env.action_space.shape[0]
-    target_raw_dataset = d4rl.qlearning_dataset(target_env)
-    target_buffer = ReplayBufferProMax(
-        target_state_dim,
-        target_action_dim,
-        config.buffer_size,
-        config.device,
-    )
-    target_buffer.load_d4rl_dataset(target_raw_dataset)
-    del target_raw_dataset
-    target_max_action = float(target_env.action_space.high[0])
+    # TODO: Need a proper place to normalize the state and action and the environment and test environment!!!
+    source_domain = Domain(config.source_domain,
+                           config.source_dataset, is_target=False) if config.cross_train_mode != 'None' else None
+    target_domain = Domain(config.target_domain, config.target_dataset, is_target=True)
 
-    tokenizer, language_model = None, None
-    if config.enable_language_encoding:
+    tokenizer, language_model, emb_dim, = None, None, 0,
+    if config.enable_emb:
         tokenizer = AutoTokenizer.from_pretrained(config.pretrained_LM)
         language_model = AutoModel.from_pretrained(config.pretrained_LM).to(config.device)
         language_model.eval()
-        language_embedding_dim = language_model.config.hidden_size
+        emb_dim = language_model.config.hidden_size
 
-        target_buffer.encode_raw_d4rl_data(config.target_domain, config.target_dataset, tokenizer, language_model,
-                                           config.prefix_name, config.suffix_name, batch_size=config.enc_batch_size, encoding_only=config.encoding_only, emb_mode=config.emb_mode)
-        if config.prefix_name == 'mjc_re':
-            target_buffer._state_embeddings = torch.cat((target_buffer._state_embeddings, target_buffer._states[:target_buffer._size]), dim=1)
-            target_buffer._next_state_embeddings = torch.cat(
-                (target_buffer._next_state_embeddings, target_buffer._next_states[:target_buffer._size]), dim=1)
+    load_sa = 'S'  # Choose from 'S', 'A', 'SA', to indicate embeddings to load.
+    raw_mean, raw_std, emb_mean, emb_std = 0, 1, 0, 1
+    for domain in [source_domain, target_domain]:
+        if domain is None:  # For example, cross_train_mode is None.
+            continue
 
-    # TODO: Improve encoding_only case.
-    if config.encoding_only:
-        return
+        # Load raw d4rl dataset
+        domain.load_d4rl_dataset_with_ratio(data_ratio=config.data_ratio if domain.is_target else 1.0)
 
-    if config.cross_training_mode != 'None':
-        source_env_name = '%s-%s-v2' % (config.source_domain, config.source_dataset)
-        source_env = gym.make(source_env_name)
-        source_state_dim = source_env.observation_space.shape[0]
-        source_action_dim = source_env.action_space.shape[0]
-        source_raw_dataset = d4rl.qlearning_dataset(source_env)
-        source_buffer = ReplayBufferProMax(
-            source_state_dim,
-            source_action_dim,
-            config.buffer_size,
-            config.device,
-        )
-        source_buffer.load_d4rl_dataset(source_raw_dataset)
-        del source_raw_dataset
-        source_max_action = float(source_env.action_space.high[0])
-        if config.enable_language_encoding:
-            source_buffer.encode_raw_d4rl_data(config.source_domain, config.source_dataset, tokenizer, language_model,
-                                               config.prefix_name, config.suffix_name, batch_size=config.enc_batch_size, encoding_only=config.encoding_only, emb_mode=config.emb_mode)
-            if config.prefix_name == 'mjc_re':
-                source_buffer._state_embeddings = torch.cat(
-                    (source_buffer._state_embeddings, source_buffer._states[:source_buffer._size]), dim=1)
-                source_buffer._next_state_embeddings = torch.cat(
-                    (source_buffer._next_state_embeddings, source_buffer._next_states[:source_buffer._size]), dim=1)
+        # Load or compute embedding dataset
+        if config.enable_emb:
+            domain.load_embeddings(config, tokenizer, language_model, load_sa=load_sa)
+            if config.enc_only:
+                return
 
-    target_buffer.retain_data_ratio(data_ratio=config.data_ratio)
+            # Normalize embeddings
+            if config.normalize_emb:
+                if domain.is_target:
+                    emb_mean, emb_std = domain.normalize_states(raw_or_emb='emb')
+                else:
+                    domain.normalize_states(raw_or_emb='emb')
 
-    emb_mean, emb_std = None, None
-    if config.enable_language_encoding:
-        if config.normalize_embedding:
-            if config.cross_training_mode != 'None':
-                normalize_embedding(source_buffer)
-            # TODO: They are tensor...
-            emb_mean, emb_std = normalize_embedding(target_buffer)
-    else:
-        target_env = preprocess_states_and_actions(target_buffer, target_env_name, target_env, config.normalize_reward,
-                                                   config.normalize)
-        if config.cross_training_mode != 'None':
-            source_env = preprocess_states_and_actions(source_buffer, source_env_name, source_env, config.normalize_reward,
-                                                       config.normalize)
+        # Normalize raw data and reset target env stats
+        if config.normalize:
+            if domain.is_target:
+                raw_mean, raw_std = domain.normalize_states(raw_or_emb='raw')
+            else:
+                domain.normalize_states(raw_or_emb='raw')
 
     if config.checkpoints_path is not None:
         print(f"Checkpoints path: {config.checkpoints_path}")
@@ -570,31 +629,29 @@ def run_TD3_BC(config: TrainConfig):
 
     # Set seeds
     seed = config.seed
-    set_seed(seed, target_env)
+    set_seed(seed, target_domain.env)
 
-    # TODO: Modify the action dimension and max action when having decoder.
-    input_state_dim = language_embedding_dim if config.enable_language_encoding else target_state_dim
-    if config.enable_language_encoding and config.prefix_name == 'mjc_re':
-        input_state_dim = input_state_dim + target_state_dim
+    input_state_dim = target_domain.state_dim
+    if config.enable_emb:
+        input_state_dim = emb_dim
+        if config.add_concat:
+            input_state_dim += target_domain.state_dim
 
-    actor_arch = critic_arch = '256-256'
     hidden_arch = config.hidden_arch
-    if '|' in hidden_arch:
-        actor_arch, critic_arch = hidden_arch.split('|')
-    else:
-        actor_arch = critic_arch = hidden_arch
+    action_dim = target_domain.action_dim
+    max_action = target_domain.max_action
 
-    actor = Actor(input_state_dim, target_action_dim, target_max_action, arch=actor_arch).to(config.device)
+    actor = Actor(input_state_dim, action_dim, max_action, arch=hidden_arch).to(config.device)
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=3e-4)
 
-    critic_1 = Critic(input_state_dim, target_action_dim, arch=critic_arch).to(config.device)
+    critic_1 = Critic(input_state_dim, action_dim, arch=hidden_arch).to(config.device)
     critic_1_optimizer = torch.optim.Adam(critic_1.parameters(), lr=3e-4)
-    critic_2 = Critic(input_state_dim, target_action_dim, arch=critic_arch).to(config.device)
+    critic_2 = Critic(input_state_dim, action_dim, arch=hidden_arch).to(config.device)
     critic_2_optimizer = torch.optim.Adam(critic_2.parameters(), lr=3e-4)
 
     # TODO: kwargs also contains max_action.
     kwargs = {
-        "max_action": target_max_action,
+        "max_action": max_action,
         "actor": actor,
         "actor_optimizer": actor_optimizer,
         "critic_1": critic_1,
@@ -605,8 +662,8 @@ def run_TD3_BC(config: TrainConfig):
         "tau": config.tau,
         "device": config.device,
         # TD3
-        "policy_noise": config.policy_noise * target_max_action,
-        "noise_clip": config.noise_clip * target_max_action,
+        "policy_noise": config.policy_noise * max_action,
+        "noise_clip": config.noise_clip * max_action,
         "policy_freq": config.policy_freq,
         # TD3 + BC
         "alpha": config.alpha,
@@ -619,6 +676,7 @@ def run_TD3_BC(config: TrainConfig):
 
     # Initialize actor
     trainer = TD3_BC(**kwargs)
+    buffer = Buffer(config, source_domain, target_domain)
 
     if config.load_model != "":
         policy_file = Path(config.load_model)
@@ -627,46 +685,30 @@ def run_TD3_BC(config: TrainConfig):
 
     wandb_init(asdict(config))
 
-    # TODO: Implement 'finetune' mode; 'random co-training.
     evaluations = []
     for t in tqdm(range(int(config.max_timesteps)), desc='RL Agent Training'):
-        # TODO: modify sample_action_embedding option.
-        batch = []
-
-        if config.cross_training_mode == 'SymCoT':
-            source_batch = source_buffer.sample(config.batch_size // 2, sample_state_embedding=config.enable_language_encoding)
-            target_batch = target_buffer.sample(config.batch_size // 2, sample_state_embedding=config.enable_language_encoding)
-            batch = [torch.cat(i, dim=0) for i in zip(source_batch, target_batch)]
-        elif config.cross_training_mode == 'RandomCoT':
-            pass
-        elif config.cross_training_mode == 'ZeroShot':
-            batch = source_buffer.sample(config.batch_size, sample_state_embedding=config.enable_language_encoding)
-        elif config.cross_training_mode == 'None':  # Target domain data training only
-            batch = target_buffer.sample(config.batch_size, sample_state_embedding=config.enable_language_encoding)
-        batch = [b.to(config.device) for b in batch]
+        batch = buffer.sample()
         log_dict = trainer.train(batch)
         wandb.log(log_dict, step=trainer.total_it)
         # Evaluate episode
         if (t + 1) % config.eval_freq == 0:
             print(f"Time steps: {t + 1}")
             eval_scores = eval_actor(
-                target_env,
+                target_domain.env,
                 actor,
                 device=config.device,
                 n_episodes=config.n_episodes,
                 seed=config.seed,
-                enable_language_encoding=config.enable_language_encoding,
-                domain=config.target_domain,
+                config=config,
                 tokenizer=tokenizer,
                 language_model=language_model,
-                prefix_name=config.prefix_name,
-                suffix_name=config.suffix_name,
+                raw_mean=raw_mean,
+                raw_std=raw_std,
                 emb_mean=emb_mean,
                 emb_std=emb_std,
-                emb_mode=config.emb_mode
             )
             eval_score = eval_scores.mean()
-            normalized_eval_score = target_env.get_normalized_score(eval_score) * 100.0
+            normalized_eval_score = target_domain.env.get_normalized_score(eval_score) * 100.0
             evaluations.append(normalized_eval_score)
             print("---------------------------------------")
             print(

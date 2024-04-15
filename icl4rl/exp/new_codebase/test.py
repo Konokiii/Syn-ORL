@@ -30,22 +30,22 @@ def main():
     setting = args.setting
 
     settings = [
-        'source_domain', '', ['halfcheetah'],
-        'target_domain', '', ['walker2d'],
+        # 'source_domain', '', ['halfcheetah'],
+        'target_domain', '', ['hopper', 'walker2d', 'halfcheetah'],
 
-        'source_dataset', '', ['medium'],
-        'target_dataset', '', ['medium'],
+        # 'source_dataset', '', ['medium'],
+        'target_dataset', '', ['medium-replay', 'medium'],
 
-        'enable_language_encoding', 'enc', [True],
-        'emb_mode', 'embM', ['cls'],
-        'prefix_name', 'PF', ['mjc_short', 'none'],
-        'suffix_name', 'SF', ['mjc_unit', 'none'],
-        'normalize_embedding', 'normE', [True, False],
+        'enable_emb', 'enc', [True],
+        'prefix', 'PF', ['mjc_re'],
+        'suffix', 'SF', ['mjc_unit'],
+        'normalize_emb', 'normE', [False],
+        'add_concat', 'cat', [True, False],
 
-        'cross_training_mode', 'scr', ['ZeroShot', 'SymCoT', 'None'],
-        'data_ratio', 'R', [0.01, 0.1, 1.0],
+        'cross_train_mode', 'M', ['None'],
+        'data_ratio', 'R', [0.1, 0.5, 1.0],
 
-        # 'hidden_arch', 'arch', ['256-256'],
+        'hidden_arch', 'arch', ['256-256'],
         'seed', 'S', [0, 1, 2]
     ]
 
@@ -58,24 +58,24 @@ def main():
 
     indexes, actual_setting, total, hyper2logname = get_setting_dt(settings, setting)
     # Terminate undesirable setups
-    if actual_setting['source_domain'] == actual_setting['target_domain']:
-        print(f'Skip setup {setting}. Source and target domains are the same.')
-        return
-    if actual_setting['source_dataset'] != actual_setting['target_dataset']:
-        print(f'Skip setup {setting}. Source and target datasets differ.')
-        return
-    if not actual_setting['enable_language_encoding']:
-        if actual_setting['prefix_name'] == actual_setting['suffix_name'] == 'none':
-            pass
-        else:
-            print(f'Skip setup {setting}. Disable language encoding.')
-            return
-    if actual_setting['cross_training_mode'] == 'ZeroShot':
-        if actual_setting['data_ratio'] == 1.0:
-            pass
-        else:
-            print(f'Skip setup {setting}. ZeroShot training does not involve source data.')
-            return
+    # if actual_setting['source_domain'] == actual_setting['target_domain']:
+    #     print(f'Skip setup {setting}. Source and target domains are the same.')
+    #     return
+    # if actual_setting['source_dataset'] != actual_setting['target_dataset']:
+    #     print(f'Skip setup {setting}. Source and target datasets differ.')
+    #     return
+    # if not actual_setting['enable_language_encoding']:
+    #     if actual_setting['prefix_name'] == actual_setting['suffix_name'] == 'none':
+    #         pass
+    #     else:
+    #         print(f'Skip setup {setting}. Disable language encoding.')
+    #         return
+    # if actual_setting['cross_training_mode'] == 'ZeroShot':
+    #     if actual_setting['data_ratio'] == 1.0:
+    #         pass
+    #     else:
+    #         print(f'Skip setup {setting}. ZeroShot training does not involve source data.')
+    #         return
 
     # exp_name_full = get_auto_exp_name(actual_setting, hyper2logname, exp_prefix='')
     # config = pyrallis.load(TrainConfig, '/configs/offline/iql/%s/%s_v2.yaml'
@@ -84,10 +84,12 @@ def main():
     """replace values"""
     config = TrainConfig(**actual_setting)
     config.device = DEVICE
-    config.eval_freq = int(1e4)
+    # TODO: Run faster exps.
+    config.eval_freq = 3
+    config.n_episodes = 2
+    config.max_timesteps = 6
 
-    config.group = '%s2%s-%s2%s' % (env2short[config.source_domain], env2short[config.target_domain],
-                                    data2short[config.source_dataset], data2short[config.target_dataset])
+    config.group = 'new_test'
     config.name = '_'.join([v+str(actual_setting[k]) for k,v in hyper2logname.items() if v != ''])
 
     run_TD3_BC(config)

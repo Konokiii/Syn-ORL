@@ -33,12 +33,12 @@ def LM_mean_pooling(model_output, attention_mask):
 
 
 @torch.no_grad()
-def encode(raw_vectors: np.ndarray, domain_name: str, tokenizer, language_model,
-           prefix_annotation_dict: Optional[Dict[str, list]],
-           suffix_annotation_dict: Optional[Dict[str, list]], emb_mode: str, device: str = 'cpu'):
-    if prefix_annotation_dict.get(domain_name, None) is None:
+def encode_fn(raw_vectors: np.ndarray, domain_name: str, tokenizer, language_model,
+              prefix_annotation_dict: Optional[Dict[str, list]],
+              suffix_annotation_dict: Optional[Dict[str, list]], emb_mode: str = 'avg', device: str = 'cpu'):
+    if prefix_annotation_dict.get(domain_name) is None:
         raise KeyError('Unsupported domain prefix annotation.')
-    if suffix_annotation_dict.get(domain_name, None) is None:
+    if suffix_annotation_dict.get(domain_name) is None:
         raise KeyError('Unsupported domain suffix annotation.')
 
     prefix_annotations = prefix_annotation_dict[domain_name]
@@ -54,253 +54,70 @@ def encode(raw_vectors: np.ndarray, domain_name: str, tokenizer, language_model,
     return embeddings.cpu().numpy()
 
 
-class ReplayBuffer:
-    def __init__(
-            self,
-            state_dim: int,
-            action_dim: int,
-            buffer_size: int,
-            device: str = "cpu",
-    ):
-        self._buffer_size = buffer_size
-        self._pointer = 0
-        self._size = 0
+class Buffer:
+    def __init__(self, config, source_domain=None, target_domain=None):
+        if (source_domain or target_domain) is None:
+            raise ValueError('Either domain needs to be not None type.')
 
-        self._states = torch.zeros(
-            (buffer_size, state_dim), dtype=torch.float32, device=device
-        )
-        self._actions = torch.zeros(
-            (buffer_size, action_dim), dtype=torch.float32, device=device
-        )
-        self._rewards = torch.zeros((buffer_size, 1), dtype=torch.float32, device=device)
-        self._next_states = torch.zeros(
-            (buffer_size, state_dim), dtype=torch.float32, device=device
-        )
-        self._dones = torch.zeros((buffer_size, 1), dtype=torch.float32, device=device)
-        self._device = device
+        self.source_raw, self.source_emb, self.source_size = None, None, 0
+        self.target_raw, self.target_emb, self.target_size = None, None, 0
 
-    def _to_tensor(self, data: np.ndarray) -> torch.Tensor:
-        return torch.tensor(data, dtype=torch.float32, device=self._device)
+        if source_domain:
+            self.source_raw = source_domain.raw_dataset
+            self.source_emb = source_domain.emb_dataset
+            self.source_size = self.source_raw['observations'].shape[0]
+        if target_domain:
+            self.target_raw = target_domain.raw_dataset
+            self.target_emb = target_domain.emb_dataset
+            self.target_size = self.target_raw['observations'].shape[0]
 
-    # Loads data in d4rl format, i.e. from Dict[str, np.array].
-    def load_d4rl_dataset(self, data: Dict[str, np.ndarray]):
-        if self._size != 0:
-            raise ValueError("Trying to load data into non-empty replay buffer")
-        n_transitions = data["observations"].shape[0]
-        if n_transitions > self._buffer_size:
-            raise ValueError(
-                "Replay buffer is smaller than the dataset you are trying to load!"
-            )
-        self._states[:n_transitions] = self._to_tensor(data["observations"])
-        self._actions[:n_transitions] = self._to_tensor(data["actions"])
-        self._rewards[:n_transitions] = self._to_tensor(data["rewards"][..., None])
-        self._next_states[:n_transitions] = self._to_tensor(data["next_observations"])
-        self._dones[:n_transitions] = self._to_tensor(data["terminals"][..., None])
-        self._size += n_transitions
-        self._pointer = min(self._size, n_transitions)
+        self.config = config
 
-        print(f"Dataset size: {n_transitions}")
+    def to_tensor(self, batch) -> List[torch.Tensor]:
+        return [torch.tensor(batch[k], dtype=torch.float32, device=self.config.device)
+                for k in ['observations', 'actions', 'rewards', 'next_observations', 'terminals']]
 
-    def sample(self, batch_size: int) -> TensorBatch:
-        indices = np.random.randint(0, min(self._size, self._pointer), size=batch_size)
-        states = self._states[indices]
-        actions = self._actions[indices]
-        rewards = self._rewards[indices]
-        next_states = self._next_states[indices]
-        dones = self._dones[indices]
-        return [states, actions, rewards, next_states, dones]
-
-    def add_transition(self):
-        # Use this method to add new data into the replay buffer during fine-tuning.
-        # I left it unimplemented since now we do not do fine-tuning.
-        raise NotImplementedError
-
-
-class ReplayBufferProMax(ReplayBuffer):
-    def __init__(self, state_dim: int,
-                 action_dim: int,
-                 buffer_size: int,
-                 device: str = "cpu",
-                 ):
-        super().__init__(state_dim, action_dim, buffer_size, device)
-        # self._buffer_size = buffer_size
-        # self._pointer = 0
-        # self._size = 0
-        #
-        # self._states = torch.zeros(
-        #     (buffer_size, state_dim), dtype=torch.float32, device=device
-        # )
-        # self._actions = torch.zeros(
-        #     (buffer_size, action_dim), dtype=torch.float32, device=device
-        # )
-        # self._rewards = torch.zeros((buffer_size, 1), dtype=torch.float32, device=device)
-        # self._next_states = torch.zeros(
-        #     (buffer_size, state_dim), dtype=torch.float32, device=device
-        # )
-        # self._dones = torch.zeros((buffer_size, 1), dtype=torch.float32, device=device)
-        # self._device = device
-
-        self._next_state_embeddings = None
-        self._action_embeddings = None
-        self._state_embeddings = None
-        self.has_embedded = False
-
-    def _to_tensor(self, data: np.ndarray) -> torch.Tensor:
-        return torch.tensor(data, dtype=torch.float32, device=self._device)
-
-    # Loads data in d4rl format, i.e. from Dict[str, np.array].
-    def load_d4rl_dataset(self, data: Dict[str, np.ndarray]):
-        if self._size != 0:
-            raise ValueError("Trying to load data into non-empty replay buffer")
-        n_transitions = data["observations"].shape[0]
-        if n_transitions > self._buffer_size:
-            raise ValueError(
-                "Replay buffer is smaller than the dataset you are trying to load!"
-            )
-        self._states[:n_transitions] = self._to_tensor(data["observations"])
-        self._actions[:n_transitions] = self._to_tensor(data["actions"])
-        self._rewards[:n_transitions] = self._to_tensor(data["rewards"][..., None])
-        self._next_states[:n_transitions] = self._to_tensor(data["next_observations"])
-        self._dones[:n_transitions] = self._to_tensor(data["terminals"][..., None])
-        self._size += n_transitions
-        self._pointer = min(self._size, n_transitions)
-
-        print(f"Dataset size: {n_transitions}")
-
-    def encode_raw_d4rl_data(self, domain: str, dataset: str, tokenizer, language_model, prefix_name, suffix_name, batch_size=64,
-                             encoding_only=False, emb_mode='avg'):
-        # Currently do not support language encoding twice.
-        if self.has_embedded:
-            raise ValueError('Action Denied! ReplayBuffer has contained language embeddings.')
-
-        # Check whether the d4rl raw data has been loaded.
-        if self._size == 0:
-            raise ValueError('Action Denied! No D4RL data loaded.')
-
-        data = {'states': None, 'next_states': None, 'actions': None}
-
-        # Load saved language embeddings
-        folder_path = '/corl/icl4rl/language_embeddings/'
-        state_file_name = '%s_%s_%s_%s_%s%s_S.pkl' % (
-            domain, dataset, prefix_name, suffix_name, '' if emb_mode == 'avg' else 'cls_',
-            language_model.__class__.__name__)
-        action_file_name = '%s_%s_%s_%s_%s%s_A.pkl' % (
-            domain, dataset, prefix_name, suffix_name, '' if emb_mode == 'avg' else 'cls_',
-            language_model.__class__.__name__)
-        state_file_path = os.path.join(folder_path, state_file_name)
-        action_file_path = os.path.join(folder_path, action_file_name)
-
-        print('Attempt to encode data from %s_%s_%s_%s_%s%s.' % (
-            domain, dataset, prefix_name, suffix_name, '' if emb_mode == 'avg' else 'cls_',
-            language_model.__class__.__name__))
-
-        if os.path.exists(state_file_path):
-            with open(state_file_path, 'rb') as file:
-                data['states'], data['next_states'] = pickle.load(file)
-            print('State embeddings successfully loaded from: ', state_file_name)
+    def get_sas(self, idx, split='target', use_state_emb=False, use_action_emb=False):
+        if split == 'target':
+            raw_dataset = self.target_raw
+            emb_dataset = self.target_emb
+        elif split == 'source':
+            raw_dataset = self.source_raw
+            emb_dataset = self.source_emb
         else:
-            print('State embeddings file does not exist. Start encoding instead.')
+            raise KeyError('The \'split\' argument should be either \'target\' or \'source\'.')
 
-        if os.path.exists(action_file_path):
-            with open(action_file_path, 'rb') as file:
-                data['actions'] = pickle.load(file)
-            print('Action embeddings successfully loaded from: ', action_file_name)
+        if (raw_dataset or emb_dataset) is None:
+            raise ValueError('The corresponding dataset is not in the buffer.')
+
+        batch = {
+            'observations': raw_dataset['observations'][idx],
+            'actions': raw_dataset['actions'][idx],
+            'next_observations': raw_dataset['next_observations'][idx]
+        }
+        if use_state_emb:
+            batch['observations'] = emb_dataset['observations'][idx]
+            batch['next_observations'] = emb_dataset['next_observations'][idx]
+        if use_action_emb:
+            batch['actions'] = emb_dataset['actions'][idx]
+
+        return batch
+
+    def sample(self):
+        batch_size = self.config.batch_size
+        add_concat = self.config.add_concat
+        enable_emb = self.config.enable_emb
+        mode = self.config.cross_train_mode
+
+        if mode == 'None':
+            idx = np.random.choice(self.target_size, size=batch_size, replace=False)
+            batch = self.get_sas(idx, split='target', use_state_emb=enable_emb)
+            if enable_emb and add_concat:
+                batch_raw = self.get_sas(idx, split='target', use_state_emb=False)
+                batch = {k: np.concatenate((v, batch_raw[k]), axis=1) for k, v in batch.items()}
+
+            batch['rewards'] = self.target_raw['rewards'][idx][..., None]
+            batch['dones'] = self.target_raw['terminals'][idx][..., None]
+            return self.to_tensor(batch)
         else:
-            print('Action embeddings file does not exist. Start encoding instead.')
-
-        # TODO: Combine the following two 'if' clauses.
-        if data['states'] is None:
-            for i in tqdm(range(0, self._size, batch_size), desc='Processing States'):
-                idx_ub = min(i + batch_size, self._size)
-                batch_s = self._states[i:idx_ub].cpu().numpy()
-                batch_s_prime = self._next_states[i:idx_ub].cpu().numpy()
-                encoded_s = encode(batch_s, domain, tokenizer, language_model,
-                                   ALL_ANNOTATIONS_DICT[prefix_name]['state'], ALL_ANNOTATIONS_DICT[suffix_name]['state'], emb_mode, self._device)
-                encoded_s_prime = encode(batch_s_prime, domain, tokenizer, language_model,
-                                         ALL_ANNOTATIONS_DICT[prefix_name]['state'], ALL_ANNOTATIONS_DICT[suffix_name]['state'], emb_mode, self._device)
-                if data['states'] is None:
-                    data['states'] = encoded_s
-                else:
-                    data['states'] = np.concatenate((data['states'], encoded_s), axis=0)
-                if data['next_states'] is None:
-                    data['next_states'] = encoded_s_prime
-                else:
-                    data['next_states'] = np.concatenate((data['next_states'], encoded_s_prime), axis=0)
-
-            # if prefix_name == 'mjc_re':
-            #     data['states'] = np.concatenate((data['states'], self._states[self._size, :]), axis=1)
-            #     data['next_states'] = np.concatenate((data['next_states'], self._next_states[self._size, :]), axis=1)
-
-            with open(state_file_path, 'wb') as file:
-                pickle.dump((data['states'], data['next_states']), file)
-                print('State encoding successful. Save to: ', state_file_name)
-
-        if data['actions'] is None:
-            for i in tqdm(range(0, self._size, batch_size), desc='Processing Actions'):
-                idx_ub = min(i + batch_size, self._size)
-                batch_a = self._actions[i:idx_ub].cpu().numpy()
-                encoded_a = encode(batch_a, domain, tokenizer, language_model, ALL_ANNOTATIONS_DICT[prefix_name]['action'],
-                                   ALL_ANNOTATIONS_DICT[suffix_name]['action'], emb_mode, self._device)
-                if data['actions'] is None:
-                    data['actions'] = encoded_a
-                else:
-                    data['actions'] = np.concatenate((data['actions'], encoded_a), axis=0)
-
-            # if prefix_name == 'mjc_re':
-            #     data['actions'] = np.concatenate((data['actions'], self._actions[self._size, :]), axis=1)
-
-            with open(action_file_path, 'wb') as file:
-                pickle.dump(data['actions'], file)
-                print('Action encoding successful. Save to: ', action_file_name)
-
-        if not encoding_only:
-            self._state_embeddings = self._to_tensor(data["states"])
-            self._action_embeddings = self._to_tensor(data["actions"])
-            self._next_state_embeddings = self._to_tensor(data["next_states"])
-            self.has_embedded = True
-            print('Language embeddings loaded for domain %s' % domain)
-
-    def retain_data_ratio(self, data_ratio):
-        # Keep 'data_ratio' many of data in current buffer
-        # Check whether the d4rl raw data has been loaded.
-        if self._size == 0:
-            raise ValueError('Action Denied! No D4RL data loaded.')
-        if data_ratio == 1.0:
-            return
-        np.random.seed(0)
-        use_size = int(data_ratio * self._size)
-        indices = np.random.choice(self._size, use_size, replace=False)
-        self._states = self._states[indices]
-        self._next_states = self._next_states[indices]
-        self._actions = self._actions[indices]
-        self._rewards = self._rewards[indices]
-        self._dones = self._dones[indices]
-        if self.has_embedded:
-            self._state_embeddings = self._state_embeddings[indices]
-            self._next_state_embeddings = self._next_state_embeddings[indices]
-            self._action_embeddings = self._action_embeddings[indices]
-        # TODO: Take '_pointer' more seriously.
-        self._size = use_size
-        self._pointer = use_size
-        print('Retain %f of original buffer data: ' % data_ratio, use_size)
-
-    def sample(self, batch_size: int, sample_state_embedding: bool = False,
-               sample_action_embedding: bool = False) -> TensorBatch:
-        indices = np.random.randint(0, min(self._size, self._pointer), size=batch_size)
-        if sample_state_embedding:
-            if not self.has_embedded:
-                raise ValueError('This buffer has not encoded raw d4rl states.')
-            states = self._state_embeddings[indices]
-            next_states = self._next_state_embeddings[indices]
-        else:
-            states = self._states[indices]
-            next_states = self._next_states[indices]
-        if sample_action_embedding:
-            if not self.has_embedded:
-                raise ValueError('This buffer has not encoded raw d4rl actions.')
-            actions = self._action_embeddings[indices]
-        else:
-            actions = self._actions[indices]
-        rewards = self._rewards[indices]
-        dones = self._dones[indices]
-        return [states, actions, rewards, next_states, dones]
+            raise NotImplementedError('Have not implemented such cross training mode in Buffer.sample method.')
