@@ -114,10 +114,11 @@ class Buffer:
             batch = self.get_sas(idx, split='target', use_state_emb=enable_emb)
             if enable_emb and add_concat:
                 batch_raw = self.get_sas(idx, split='target', use_state_emb=False)
-                batch = {k: np.concatenate((v, batch_raw[k]), axis=1) for k, v in batch.items()}
+                for k in ['observations', 'next_observations']:
+                    batch[k] = np.concatenate((batch[k], batch_raw[k]), axis=1)
 
             batch['rewards'] = self.target_raw['rewards'][idx][..., None]
-            batch['dones'] = self.target_raw['terminals'][idx][..., None]
+            batch['terminals'] = self.target_raw['terminals'][idx][..., None]
             return self.to_tensor(batch)
         else:
             raise NotImplementedError('Have not implemented such cross training mode in Buffer.sample method.')

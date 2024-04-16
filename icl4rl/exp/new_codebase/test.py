@@ -36,7 +36,7 @@ def main():
         # 'source_dataset', '', ['medium'],
         'target_dataset', '', ['medium-replay', 'medium'],
 
-        'enable_emb', 'enc', [True],
+        'enable_emb', 'enc', [True, False],
         'prefix', 'PF', ['mjc_re'],
         'suffix', 'SF', ['mjc_unit'],
         'normalize_emb', 'normE', [False],
@@ -86,8 +86,8 @@ def main():
     config.device = DEVICE
     # TODO: Run faster exps.
     config.eval_freq = 3
-    config.n_episodes = 2
-    config.max_timesteps = 6
+    config.n_episodes = 1
+    config.max_timesteps = 5
 
     config.group = 'new_test'
     config.name = '_'.join([v+str(actual_setting[k]) for k,v in hyper2logname.items() if v != ''])
