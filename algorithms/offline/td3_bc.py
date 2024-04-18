@@ -44,11 +44,12 @@ class TrainConfig:
     suffix: str = 'mjc_unit'
     normalize_emb: bool = False
     add_concat: bool = False
-    emb_save_folder: str = '/corl/icl4rl/language_embeddings/'
+    emb_save_folder: str = '/corl/icl4rl/language_embeddings'
 
     # Cross domain setup
     data_ratio: float = 1.0
     cross_train_mode: str = 'None'  # Choose from 'ZeroShot', 'SymCoT', 'None'
+    max_pretrain_steps: int = 0
 
     # Model arch
     hidden_arch: str = '256-256'  # For example, this means two hidden layer of size 256
@@ -310,8 +311,9 @@ class Critic(nn.Module):
             module_list.append(nn.Linear(in_dim, hidden_size))
             module_list.append(nn.ReLU())
             in_dim = hidden_size
-        module_list.append(nn.Linear(in_dim, 1))
-        self.net = nn.Sequential(*module_list)
+        self.feature_map = nn.Sequential(*module_list)
+        self.f2r = nn.Linear(in_dim, 1)  # feature to reward
+        self.f2sp = nn.Linear(in_dim, state_dim)  # feature to state prime
 
         # self.net = nn.Sequential(
         #     nn.Linear(state_dim + action_dim, 256),
@@ -321,9 +323,17 @@ class Critic(nn.Module):
         #     nn.Linear(256, 1),
         # )
 
-    def forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+    def _get_feature(self, state: torch.Tensor, action: torch.Tensor):
         sa = torch.cat([state, action], 1)
-        return self.net(sa)
+        return self.feature_map(sa)
+
+    def forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        feature = self._get_feature(state, action)
+        return self.f2r(feature)
+
+    def predict_next_state(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        feature = self._get_feature(state, action)
+        return self.f2sp(feature)
 
 
 class TD3_BC:
@@ -363,13 +373,18 @@ class TD3_BC:
         self.alpha = alpha
 
         self.total_it = 0
+        self.total_pretrain_it = 0
         self.device = device
 
-    def train(self, batch: TensorBatch) -> Dict[str, float]:
+    def train(self, batch: Dict) -> Dict[str, float]:
         log_dict = {}
         self.total_it += 1
 
-        state, action, reward, next_state, done = batch
+        state = batch['observations']
+        action = batch['actions']
+        reward = batch['rewards']
+        next_state = batch['next_observations']
+        done = batch['terminals']
         not_done = 1 - done
 
         with torch.no_grad():
@@ -422,6 +437,30 @@ class TD3_BC:
             soft_update(self.actor_target, self.actor, self.tau)
 
         return log_dict
+
+    def pretrain(self, batch):
+        self.total_pretrain_it += 1
+        state = batch['observations']
+        action = batch['actions']
+        next_state = batch['next_observations']
+
+        q1_next_state = self.critic_1.predict_next_state(state, action)
+        q2_next_state = self.critic_2.predict_next_state(state, action)
+        q1_pretrain_loss = F.mse_loss(q1_next_state, next_state)
+        q2_pretrain_loss = F.mse_loss(q2_next_state, next_state)
+        pretrain_loss = q1_pretrain_loss + q2_pretrain_loss
+
+        self.critic_1_optimizer.zero_grad()
+        self.critic_2_optimizer.zero_grad()
+        pretrain_loss.backward()
+        self.critic_1_optimizer.step()
+        self.critic_2_optimizer.step()
+
+    def update_target_networks(self):
+        self.critic_1_target = copy.deepcopy(self.critic_1)
+        self.critic_2_target = copy.deepcopy(self.critic_2)
+        self.actor_target = copy.deepcopy(self.actor)
+
 
     def state_dict(self) -> Dict[str, Any]:
         return {
@@ -581,8 +620,8 @@ class Domain:
 def run_TD3_BC(config: TrainConfig):
     # TODO: Write the following two blocks into the same class object. Note eval_actor and encode functions.
     # TODO: Need a proper place to normalize the state and action and the environment and test environment!!!
-    source_domain = Domain(config.source_domain,
-                           config.source_dataset, is_target=False) if config.cross_train_mode != 'None' else None
+    source_domain = Domain(config.source_domain, config.source_dataset, is_target=False) \
+                            if config.cross_train_mode not in ['None', 'MDPFD, SelfFD'] else None
     target_domain = Domain(config.target_domain, config.target_dataset, is_target=True)
 
     tokenizer, language_model, emb_dim, = None, None, 0,
@@ -620,6 +659,8 @@ def run_TD3_BC(config: TrainConfig):
                 raw_mean, raw_std = domain.normalize_states(raw_or_emb='raw')
             else:
                 domain.normalize_states(raw_or_emb='raw')
+
+    buffer = Buffer(config, source_domain, target_domain)
 
     if config.checkpoints_path is not None:
         print(f"Checkpoints path: {config.checkpoints_path}")
@@ -669,14 +710,8 @@ def run_TD3_BC(config: TrainConfig):
         "alpha": config.alpha,
     }
 
-    print("---------------------------------------")
-    print(
-        f"Training TD3 + BC, Source_Domain: {config.source_domain}, Target_Domain: {config.target_domain}, Seed: {seed}")
-    print("---------------------------------------")
-
     # Initialize actor
     trainer = TD3_BC(**kwargs)
-    buffer = Buffer(config, source_domain, target_domain)
 
     if config.load_model != "":
         policy_file = Path(config.load_model)
@@ -684,6 +719,26 @@ def run_TD3_BC(config: TrainConfig):
         actor = trainer.actor
 
     wandb_init(asdict(config))
+
+    print("---------------------------------------")
+    print(
+        f"Pre-training TD3 + BC, Source_Domain: {source_domain.env_name if source_domain else None}, \
+        Target_Domain: {target_domain.env_name}, \
+        Mode: {config.cross_train_mode}, Seed: {seed},")
+    print("---------------------------------------")
+
+    for t in tqdm(range(int(config.max_pretrain_steps)), desc='RL Pretraining'):
+        batch = buffer.sample(pretrain=True)
+        trainer.pretrain(batch)
+
+    trainer.update_target_networks()
+
+    print("---------------------------------------")
+    print(
+        f"Training TD3 + BC, Source_Domain: {source_domain.env_name if source_domain else None}, \
+        Target_Domain: {target_domain.env_name}, \
+        Mode: {config.cross_train_mode}, Seed: {seed},")
+    print("---------------------------------------")
 
     evaluations = []
     for t in tqdm(range(int(config.max_timesteps)), desc='RL Agent Training'):

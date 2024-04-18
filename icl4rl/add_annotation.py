@@ -1,5 +1,6 @@
 import os
 import pickle
+import joblib
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -73,11 +74,51 @@ class Buffer:
 
         self.config = config
 
-    def to_tensor(self, batch) -> List[torch.Tensor]:
-        return [torch.tensor(batch[k], dtype=torch.float32, device=self.config.device)
-                for k in ['observations', 'actions', 'rewards', 'next_observations', 'terminals']]
+        if config.cross_train_mode == 'MDPFD':
+            self.mdp_data = self.load_mdp_data()
+            self.mdp_size = self.mdp_data['observations'].shape[0]
+            state_dim = target_domain.state_dim
+            if config.enable_emb:
+                state_dim = self.target_emb['observations'].shape[1]
+                if config.add_concat:
+                    state_dim += target_domain.state_dim
+            np.random.seed(0)
+            index2state = 2 * np.random.rand(100, state_dim) - 1
+            index2action = 2 * np.random.rand(100, target_domain.action_dim) - 1
+            self.idx2state, self.idx2action = index2state.astype(np.float32), index2action.astype(np.float32)
 
-    def get_sas(self, idx, split='target', use_state_emb=False, use_action_emb=False):
+    def load_mdp_data(self):
+        folder_path = self.config.emb_save_folder
+        file_name = 'mdp_traj1000_ns100_na100_pt1_tt1.pkl'
+        file_path = os.path.join(folder_path, 'mdp_data', file_name)
+
+        print("MDP pretrain data loaded from:", file_name)
+        mdp_dataset = joblib.load(file_path)
+
+        return mdp_dataset
+
+    def to_tensor(self, batch) -> Dict:
+        for k, v in batch.items():
+            batch[k] = torch.tensor(v, dtype=torch.float32, device=self.config.device)
+
+        return batch
+
+    def get_batch(self, idx, split='target', use_state_emb=False, use_action_emb=False):
+        if split == 'mdp':
+            if self.config.cross_train_mode != 'MDPFD':
+                raise ValueError('The current training mode is not MDP pretraining. No MDP data loaded.')
+
+            batch = {
+                'observations': self.mdp_data['observations'][idx],
+                'actions': self.mdp_data['actions'][idx],
+                'next_observations': self.mdp_data['next_observations'][idx],
+            }
+            batch['observations'] = self.idx2state[batch['observations']]
+            batch['next_observations'] = self.idx2state[batch['next_observations']]
+            batch['actions'] = self.idx2action[batch['actions']]
+
+            return batch
+
         if split == 'target':
             raw_dataset = self.target_raw
             emb_dataset = self.target_emb
@@ -93,7 +134,9 @@ class Buffer:
         batch = {
             'observations': raw_dataset['observations'][idx],
             'actions': raw_dataset['actions'][idx],
-            'next_observations': raw_dataset['next_observations'][idx]
+            'next_observations': raw_dataset['next_observations'][idx],
+            'rewards': raw_dataset['rewards'][idx][..., None],
+            'terminals': raw_dataset['terminals'][idx][..., None],
         }
         if use_state_emb:
             batch['observations'] = emb_dataset['observations'][idx]
@@ -103,22 +146,39 @@ class Buffer:
 
         return batch
 
-    def sample(self):
+    def sample(self, pretrain: bool = False):
         batch_size = self.config.batch_size
         add_concat = self.config.add_concat
         enable_emb = self.config.enable_emb
         mode = self.config.cross_train_mode
 
+        if pretrain:
+            if mode == 'SelfFD':
+                mode = 'None'
+            elif mode == 'CrossFD':
+                mode = 'ZeroShot'
+        else:
+            mode = 'None' if mode in ['SelfFD', 'CrossFD', 'MDPFD'] else mode
+
         if mode == 'None':
             idx = np.random.choice(self.target_size, size=batch_size, replace=False)
-            batch = self.get_sas(idx, split='target', use_state_emb=enable_emb)
+            batch = self.get_batch(idx, split='target', use_state_emb=enable_emb)
             if enable_emb and add_concat:
-                batch_raw = self.get_sas(idx, split='target', use_state_emb=False)
                 for k in ['observations', 'next_observations']:
-                    batch[k] = np.concatenate((batch[k], batch_raw[k]), axis=1)
+                    batch[k] = np.concatenate((batch[k], self.target_raw[k][idx]), axis=1)
 
-            batch['rewards'] = self.target_raw['rewards'][idx][..., None]
-            batch['terminals'] = self.target_raw['terminals'][idx][..., None]
-            return self.to_tensor(batch)
+        elif mode == 'ZeroShot':
+            idx = np.random.choice(self.source_size, size=batch_size, replace=False)
+            batch = self.get_batch(idx, split='source', use_state_emb=enable_emb)
+            if enable_emb and add_concat:
+                for k in ['observations', 'next_observations']:
+                    batch[k] = np.concatenate((batch[k], self.source_raw[k][idx]), axis=1)
+
+        elif mode == 'MDPFD':
+            idx = np.random.choice(self.mdp_size, size=batch_size, replace=False)
+            batch = self.get_batch(idx, split='mdp')
+
         else:
             raise NotImplementedError('Have not implemented such cross training mode in Buffer.sample method.')
+
+        return self.to_tensor(batch)

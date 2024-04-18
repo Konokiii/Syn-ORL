@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --verbose
-#SBATCH --time=48:00:00
+#SBATCH --time=12:00:00
 #SBATCH --nodes=1
 #SBATCH --exclude=gm[002-020],gm[022-023],gm024
-#SBATCH --mem=32GB
+#SBATCH --mem=8GB
 #SBATCH --mail-type=ALL # select which email types will be sent
 #SBATCH --mail-user=zd662@nyu.edu # NOTE: put your netid here if you want emails
 
