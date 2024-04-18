@@ -720,18 +720,19 @@ def run_TD3_BC(config: TrainConfig):
 
     wandb_init(asdict(config))
 
-    print("---------------------------------------")
-    print(
-        f"Pre-training TD3 + BC, Source_Domain: {source_domain.env_name if source_domain else None}, \
-        Target_Domain: {target_domain.env_name}, \
-        Mode: {config.cross_train_mode}, Seed: {seed},")
-    print("---------------------------------------")
+    if config.max_pretrain_steps > 0:
+        print("---------------------------------------")
+        print(
+            f"Pre-training TD3 + BC, Source_Domain: {source_domain.env_name if source_domain else None}, \
+            Target_Domain: {target_domain.env_name}, \
+            Mode: {config.cross_train_mode}, Seed: {seed},")
+        print("---------------------------------------")
 
-    for t in tqdm(range(int(config.max_pretrain_steps)), desc='RL Pretraining'):
-        batch = buffer.sample(pretrain=True)
-        trainer.pretrain(batch)
+        for t in tqdm(range(int(config.max_pretrain_steps)), desc='RL Pretraining'):
+            batch = buffer.sample(pretrain=True)
+            trainer.pretrain(batch)
 
-    trainer.update_target_networks()
+        trainer.update_target_networks()
 
     print("---------------------------------------")
     print(

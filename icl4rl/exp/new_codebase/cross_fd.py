@@ -43,7 +43,7 @@ def main():
         'add_concat', 'cat', [True, False],
 
         'cross_train_mode', 'M', ['CrossFD'],
-        'max_pretrain_steps', 'T', [2],
+        'max_pretrain_steps', 'T', [int(1e5)],
         'data_ratio', 'R', [0.1, 0.5, 1.0],
 
         'hidden_arch', 'arch', ['256-256'],
@@ -60,6 +60,7 @@ def main():
     indexes, actual_setting, total, hyper2logname = get_setting_dt(settings, setting)
     # Terminate undesirable setups
     if not actual_setting['enable_emb'] and actual_setting['add_concat']:
+        print(f'Skip setup {setting}. Repeated exps for no embedding + add concat.')
         return
     # if actual_setting['source_domain'] == actual_setting['target_domain']:
     #     print(f'Skip setup {setting}. Source and target domains are the same.')
@@ -91,9 +92,8 @@ def main():
     config.device = DEVICE
 
     # TODO: Run faster exps.
-    config.eval_freq = 2
-    config.n_episodes = 1
-    config.max_timesteps = 3
+    config.eval_freq = int(1e4)
+    config.n_episodes = 5
 
     config.group = 'new_test'
     config.name = '_'.join([v+str(actual_setting[k]) for k,v in hyper2logname.items() if v != ''])
