@@ -103,7 +103,7 @@ class Buffer:
 
         return batch
 
-    def get_batch(self, idx, split='target', use_state_emb=False, use_action_emb=False):
+    def get_batch(self, idx, split='target', use_state_emb=False, use_action_emb=False, add_concat=False):
         if split == 'mdp':
             if self.config.cross_train_mode != 'MDPFD':
                 raise ValueError('The current training mode is not MDP pretraining. No MDP data loaded.')
@@ -139,8 +139,12 @@ class Buffer:
             'terminals': raw_dataset['terminals'][idx][..., None],
         }
         if use_state_emb:
-            batch['observations'] = emb_dataset['observations'][idx]
-            batch['next_observations'] = emb_dataset['next_observations'][idx]
+            for k in ['observations', 'next_observations']:
+                if add_concat:
+                    batch[k] = np.concatenate((emb_dataset[k][idx], batch[k]), axis=1)
+                else:
+                    batch[k] = emb_dataset[k][idx]
+
         if use_action_emb:
             batch['actions'] = emb_dataset['actions'][idx]
 
@@ -162,21 +166,24 @@ class Buffer:
 
         if mode == 'None':
             idx = np.random.choice(self.target_size, size=batch_size, replace=False)
-            batch = self.get_batch(idx, split='target', use_state_emb=enable_emb)
-            if enable_emb and add_concat:
-                for k in ['observations', 'next_observations']:
-                    batch[k] = np.concatenate((batch[k], self.target_raw[k][idx]), axis=1)
+            batch = self.get_batch(idx, split='target', use_state_emb=enable_emb, add_concat=add_concat)
 
         elif mode == 'ZeroShot':
             idx = np.random.choice(self.source_size, size=batch_size, replace=False)
-            batch = self.get_batch(idx, split='source', use_state_emb=enable_emb)
-            if enable_emb and add_concat:
-                for k in ['observations', 'next_observations']:
-                    batch[k] = np.concatenate((batch[k], self.source_raw[k][idx]), axis=1)
+            batch = self.get_batch(idx, split='source', use_state_emb=enable_emb, add_concat=add_concat)
 
         elif mode == 'MDPFD':
             idx = np.random.choice(self.mdp_size, size=batch_size, replace=False)
             batch = self.get_batch(idx, split='mdp')
+
+        elif mode == 'RandomCoT':
+            total_size = self.source_size + self.target_size
+            idx = np.random.choice(total_size, size=batch_size, replace=False)
+            source_idx = idx[idx < self.source_size]
+            target_idx = idx[idx >= self.source_size] - self.source_size
+            source_batch = self.get_batch(source_idx, split='source', use_state_emb=enable_emb, add_concat=add_concat)
+            target_batch = self.get_batch(target_idx, split='target', use_state_emb=enable_emb, add_concat=add_concat)
+            batch = {k: np.concatenate((source_batch[k], target_batch[k]), axis=0) for k in source_batch.keys()}
 
         else:
             raise NotImplementedError('Have not implemented such cross training mode in Buffer.sample method.')

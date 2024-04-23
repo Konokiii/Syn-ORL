@@ -42,9 +42,10 @@ def main():
         'normalize_emb', 'normE', [False],
         'add_concat', 'cat', [True, False],
 
-        'cross_train_mode', 'M', ['CrossFD'],
-        'max_pretrain_steps', 'T', [int(1e5)],
+        'cross_train_mode', 'M', ['RandomCoT'],
+        # 'max_pretrain_steps', 'T', [int(1e5)],
         'data_ratio', 'R', [0.1, 0.5, 1.0],
+        'normalize', 'normR', [True, False],
 
         'hidden_arch', 'arch', ['256-256'],
         'seed', 'S', [0, 1, 2]

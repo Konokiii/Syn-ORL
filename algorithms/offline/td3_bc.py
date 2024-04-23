@@ -721,6 +721,9 @@ def run_TD3_BC(config: TrainConfig):
     wandb_init(asdict(config))
 
     if config.max_pretrain_steps > 0:
+        if config.cross_train_mode not in ['CrossFD', 'MDPFD', 'SelfFD']:
+            raise RuntimeError('Disabling pre-training, but the number of pre-training steps is greater than 0.')
+
         print("---------------------------------------")
         print(
             f"Pre-training TD3 + BC, Source_Domain: {source_domain.env_name if source_domain else None}, \
@@ -733,6 +736,9 @@ def run_TD3_BC(config: TrainConfig):
             trainer.pretrain(batch)
 
         trainer.update_target_networks()
+    else:
+        if config.cross_train_mode in ['CrossFD', 'MDPFD', 'SelfFD']:
+            raise RuntimeError('Enabling pre-training, but the number of pre-training steps is 0.')
 
     print("---------------------------------------")
     print(
